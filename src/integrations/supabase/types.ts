@@ -14,7 +14,149 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          email: string | null
+          full_name: string | null
+          id: string
+          is_provider: boolean | null
+          language_preference:
+            | Database["public"]["Enums"]["language_preference"]
+            | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id?: string
+          is_provider?: boolean | null
+          language_preference?:
+            | Database["public"]["Enums"]["language_preference"]
+            | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id?: string
+          is_provider?: boolean | null
+          language_preference?:
+            | Database["public"]["Enums"]["language_preference"]
+            | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      provider_media: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_primary: boolean | null
+          media_type: string
+          provider_id: string
+          title: string | null
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_primary?: boolean | null
+          media_type: string
+          provider_id: string
+          title?: string | null
+          url: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_primary?: boolean | null
+          media_type?: string
+          provider_id?: string
+          title?: string | null
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_media_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "provider_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      provider_profiles: {
+        Row: {
+          available: boolean | null
+          bio: string | null
+          can_bring_child: boolean | null
+          categories: string[] | null
+          child_friendly: boolean | null
+          created_at: string
+          hourly_rate: number | null
+          id: string
+          location: string | null
+          neighborhood: string | null
+          services: string[] | null
+          task_rate: number | null
+          terms_and_conditions: string | null
+          updated_at: string
+          user_id: string
+          verified: boolean | null
+          years_experience: number | null
+        }
+        Insert: {
+          available?: boolean | null
+          bio?: string | null
+          can_bring_child?: boolean | null
+          categories?: string[] | null
+          child_friendly?: boolean | null
+          created_at?: string
+          hourly_rate?: number | null
+          id?: string
+          location?: string | null
+          neighborhood?: string | null
+          services?: string[] | null
+          task_rate?: number | null
+          terms_and_conditions?: string | null
+          updated_at?: string
+          user_id: string
+          verified?: boolean | null
+          years_experience?: number | null
+        }
+        Update: {
+          available?: boolean | null
+          bio?: string | null
+          can_bring_child?: boolean | null
+          categories?: string[] | null
+          child_friendly?: boolean | null
+          created_at?: string
+          hourly_rate?: number | null
+          id?: string
+          location?: string | null
+          neighborhood?: string | null
+          services?: string[] | null
+          task_rate?: number | null
+          terms_and_conditions?: string | null
+          updated_at?: string
+          user_id?: string
+          verified?: boolean | null
+          years_experience?: number | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +165,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      language_preference: "en" | "es"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +292,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      language_preference: ["en", "es"],
+    },
   },
 } as const
