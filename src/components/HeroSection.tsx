@@ -1,10 +1,23 @@
 import { Button } from "@/components/ui/button";
-import { Search, MapPin, Calendar } from "lucide-react";
+import { Search, MapPin } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 const HeroSection = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [location, setLocation] = useState("");
+  const navigate = useNavigate();
+
+  const handleSearch = () => {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("q", searchQuery);
+    if (location) params.set("location", location);
+    navigate(`/search?${params.toString()}`);
+  };
+
+  const handleTagClick = (tag: string) => {
+    navigate(`/search?q=${encodeURIComponent(tag)}`);
+  };
 
   return (
     <section className="relative min-h-[90vh] flex items-center justify-center pt-16 overflow-hidden">
@@ -67,7 +80,7 @@ const HeroSection = () => {
               </div>
 
               {/* Search Button */}
-              <Button size="xl" className="shrink-0">
+              <Button size="xl" className="shrink-0" onClick={handleSearch}>
                 <Search className="w-5 h-5" />
                 <span className="hidden sm:inline">Search</span>
               </Button>
@@ -76,9 +89,10 @@ const HeroSection = () => {
 
           {/* Quick Tags */}
           <div className="flex flex-wrap justify-center gap-3 mt-8 animate-fade-in" style={{ animationDelay: "0.4s" }}>
-            {["Babysitter", "Dog Walker", "House Cleaning", "Handyman", "Pet Sitting"].map((tag) => (
+            {["Babysitter", "Dog Walker", "House Cleaning", "Handyman", "Pet Sitting", "Grocery Shopping", "Tutoring"].map((tag) => (
               <button
                 key={tag}
+                onClick={() => handleTagClick(tag)}
                 className="px-4 py-2 rounded-full bg-card border border-border text-sm font-medium text-muted-foreground hover:border-primary hover:text-primary transition-all duration-200"
               >
                 {tag}

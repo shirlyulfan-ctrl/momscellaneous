@@ -1,4 +1,5 @@
 import { Baby, Home, PawPrint, Wrench, Sparkles, Car } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const categories = [
   {
@@ -7,6 +8,7 @@ const categories = [
     description: "Babysitters, nannies, after-school pickup, and occasional care",
     color: "bg-primary/10 text-primary",
     count: "2,400+ helpers",
+    searchCategory: "childcare",
   },
   {
     icon: PawPrint,
@@ -14,6 +16,7 @@ const categories = [
     description: "Dog walking, pet sitting, grooming visits, and vet runs",
     color: "bg-secondary/10 text-secondary",
     count: "1,800+ helpers",
+    searchCategory: "petcare",
   },
   {
     icon: Home,
@@ -21,6 +24,7 @@ const categories = [
     description: "Cleaning, organizing, meal prep, and elderly assistance",
     color: "bg-accent/20 text-accent-foreground",
     count: "3,200+ helpers",
+    searchCategory: "household",
   },
   {
     icon: Wrench,
@@ -28,6 +32,7 @@ const categories = [
     description: "Handyman tasks, furniture assembly, yard work, and moving help",
     color: "bg-primary/10 text-primary",
     count: "2,100+ helpers",
+    searchCategory: "household",
   },
   {
     icon: Car,
@@ -35,6 +40,7 @@ const categories = [
     description: "Grocery runs, package pickup, waiting for deliveries",
     color: "bg-secondary/10 text-secondary",
     count: "1,500+ helpers",
+    searchCategory: "errands",
   },
   {
     icon: Sparkles,
@@ -42,10 +48,17 @@ const categories = [
     description: "Party help, event setup, holiday assistance",
     color: "bg-accent/20 text-accent-foreground",
     count: "900+ helpers",
+    searchCategory: "events",
   },
 ];
 
 const ServiceCategories = () => {
+  const navigate = useNavigate();
+
+  const handleCategoryClick = (searchCategory: string) => {
+    navigate(`/search?category=${searchCategory}`);
+  };
+
   return (
     <section id="services" className="py-24 bg-muted/30">
       <div className="container mx-auto px-4">
@@ -67,6 +80,7 @@ const ServiceCategories = () => {
           {categories.map((category, index) => (
             <div
               key={category.title}
+              onClick={() => handleCategoryClick(category.searchCategory)}
               className="group bg-card rounded-2xl p-6 shadow-card hover:shadow-card-hover transition-all duration-300 cursor-pointer border border-border hover:border-primary/30 hover:-translate-y-1"
               style={{ animationDelay: `${index * 0.1}s` }}
             >
