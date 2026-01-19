@@ -18,7 +18,7 @@ const Footer = () => {
               <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
                 <Heart className="w-5 h-5 text-primary-foreground" />
               </div>
-              <span className="text-xl font-bold">HelperHub</span>
+              <span className="text-xl font-bold">Momscellaneous</span>
             </a>
             <p className="text-background/70 mb-6 max-w-xs">
               Connecting families with trusted local helpers for all of life's everyday needs.
@@ -60,7 +60,7 @@ const Footer = () => {
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-background/10 flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="text-background/50 text-sm">
-            © 2024 HelperHub. All rights reserved.
+            © 2025 Momscellaneous. All rights reserved.
           </p>
           <div className="flex items-center gap-4 text-background/50 text-sm">
             <span>Made with</span>
