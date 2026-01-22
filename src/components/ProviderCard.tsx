@@ -3,15 +3,17 @@ import { Button } from "@/components/ui/button";
 
 interface ProviderCardProps {
   name: string;
-  avatar: string;
-  rating: number;
-  reviews: number;
+  avatar?: string;
+  rating?: number;
+  reviews?: number;
   location: string;
   hourlyRate: number;
   services: string[];
   verified: boolean;
   available: boolean;
+  onViewProfile?: () => void;
 }
+
 
 const ProviderCard = ({
   name,
@@ -31,10 +33,11 @@ const ProviderCard = ({
         {/* Avatar */}
         <div className="relative">
           <img
-            src={avatar}
-            alt={name}
-            className="w-16 h-16 rounded-xl object-cover"
-          />
+  src={avatar ?? "/avatar-placeholder.png"}
+  alt={name}
+  className="w-16 h-16 rounded-xl object-cover"
+/>
+
           {available && (
             <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-secondary rounded-full border-2 border-card flex items-center justify-center">
               <div className="w-2 h-2 bg-secondary-foreground rounded-full" />
@@ -67,9 +70,13 @@ const ProviderCard = ({
       <div className="flex items-center gap-2 mb-4">
         <div className="flex items-center gap-1">
           <Star className="w-5 h-5 text-accent fill-accent" />
-          <span className="font-semibold text-foreground">{rating}</span>
+          <span className="font-semibold text-foreground">{rating ?? 5}</span>
+
         </div>
-        <span className="text-muted-foreground text-sm">({reviews} reviews)</span>
+        <span className="text-muted-foreground text-sm">
+  ({reviews ?? 0} reviews)
+</span>
+
         {available && (
           <div className="flex items-center gap-1 ml-auto text-secondary text-sm font-medium">
             <Clock className="w-4 h-4" />
