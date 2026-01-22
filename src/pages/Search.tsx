@@ -1,14 +1,30 @@
-import { useState, useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import ProviderCard from "@/components/ProviderCard";
 import SearchFilters from "@/components/SearchFilters";
-import { providers, categories, neighborhoods } from "@/data/providers";
+import { categories, neighborhoods } from "@/data/providers";
 import { Search, MapPin, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { supabase } from "@/supabase/client";
+
+type ProviderProfileRow = {
+  id: string;
+  user_id: string;
+  bio: string | null;
+  location: string | null;
+  neighborhood: string | null;
+  hourly_rate: string | number | null;
+  services: string[] | null;
+  verified: boolean | null;
+  available: boolean | null;
+  years_experience: number | null;
+  created_at: string;
+};
 
 const SearchPage = () => {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialQuery = searchParams.get("q") || "";
   const initialLocation = searchParams.get("location") || "";
@@ -17,77 +33,152 @@ const SearchPage = () => {
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [location, setLocation] = useState(initialLocation);
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
-  const [selectedNeighborhood, setSelectedNeighborhood] = useState("All Neighborhoods");
+  const [selectedNeighborhood, setSelectedNeighborhood] =
+    useState("All Neighborhoods");
   const [showAvailableOnly, setShowAvailableOnly] = useState(false);
   const [sortBy, setSortBy] = useState("rating");
   const [showFilters, setShowFilters] = useState(false);
 
-  const filteredProviders = useMemo(() => {
-    let result = [...providers];
+  const [rows, setRows] = useState<ProviderProfileRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-    // Filter by search query
+  // 1) Load providers from Supabase
+  useEffect(() => {
+    const loadProviders = async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("provider_profiles")
+        .select(
+          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at"
+        )
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Failed to load provider_profiles:", error);
+        setRows([]);
+      } else {
+        setRows((data ?? []) as ProviderProfileRow[]);
+      }
+      setLoading(false);
+    };
+
+    loadProviders();
+  }, []);
+
+  // 2) Filter + sort (client-side, keeps your current UX)
+  const filteredProviders = useMemo(() => {
+    let result = [...rows];
+
+    // Filter by search query (search bio/services/location/neighborhood)
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(
-        (provider) =>
-          provider.name.toLowerCase().includes(query) ||
-          provider.services.some((s) => s.toLowerCase().includes(query)) ||
-          provider.bio.toLowerCase().includes(query)
-      );
+      const q = searchQuery.toLowerCase();
+      result = result.filter((p) => {
+        const bio = (p.bio ?? "").toLowerCase();
+        const loc = (p.location ?? "").toLowerCase();
+        const nbh = (p.neighborhood ?? "").toLowerCase();
+        const services = (p.services ?? []).map((s) => s.toLowerCase());
+        return (
+          bio.includes(q) ||
+          loc.includes(q) ||
+          nbh.includes(q) ||
+          services.some((s) => s.includes(q))
+        );
+      });
     }
 
-    // Filter by location
+    // Filter by location box (matches location or neighborhood)
     if (location.trim()) {
       const loc = location.toLowerCase();
-      result = result.filter(
-        (provider) =>
-          provider.location.toLowerCase().includes(loc) ||
-          provider.neighborhood.toLowerCase().includes(loc)
-      );
+      result = result.filter((p) => {
+        const l = (p.location ?? "").toLowerCase();
+        const n = (p.neighborhood ?? "").toLowerCase();
+        return l.includes(loc) || n.includes(loc);
+      });
     }
 
     // Filter by category
+    // Your DB currently only has `services` (array). We’ll interpret “category”
+    // as matching either the category id or its label inside services text.
     if (selectedCategory !== "all") {
-      result = result.filter((provider) =>
-        provider.categories.includes(selectedCategory)
-      );
+      const catLabel =
+        categories.find((c: any) => c.id === selectedCategory)?.label ?? "";
+      const target1 = selectedCategory.toLowerCase();
+      const target2 = catLabel.toLowerCase();
+
+      result = result.filter((p) => {
+        const services = (p.services ?? []).map((s) => s.toLowerCase());
+        return (
+          services.some((s) => s.includes(target1)) ||
+          (target2 ? services.some((s) => s.includes(target2)) : false)
+        );
+      });
     }
 
-    // Filter by neighborhood
+    // Filter by neighborhood dropdown
     if (selectedNeighborhood !== "All Neighborhoods") {
-      result = result.filter(
-        (provider) => provider.neighborhood === selectedNeighborhood
-      );
+      result = result.filter((p) => (p.neighborhood ?? "") === selectedNeighborhood);
     }
 
     // Filter by availability
     if (showAvailableOnly) {
-      result = result.filter((provider) => provider.available);
+      result = result.filter((p) => !!p.available);
     }
 
     // Sort results
+    // DB doesn’t have rating/reviews yet; we’ll keep stable ordering for those.
     switch (sortBy) {
       case "rating":
-        result.sort((a, b) => b.rating - a.rating);
-        break;
       case "reviews":
-        result.sort((a, b) => b.reviews - a.reviews);
+        // keep created_at order (already ordered desc when fetched)
         break;
       case "price-low":
-        result.sort((a, b) => a.hourlyRate - b.hourlyRate);
+        result.sort(
+          (a, b) => Number(a.hourly_rate ?? 0) - Number(b.hourly_rate ?? 0)
+        );
         break;
       case "price-high":
-        result.sort((a, b) => b.hourlyRate - a.hourlyRate);
+        result.sort(
+          (a, b) => Number(b.hourly_rate ?? 0) - Number(a.hourly_rate ?? 0)
+        );
         break;
     }
 
     return result;
-  }, [searchQuery, location, selectedCategory, selectedNeighborhood, showAvailableOnly, sortBy]);
+  }, [
+    rows,
+    searchQuery,
+    location,
+    selectedCategory,
+    selectedNeighborhood,
+    showAvailableOnly,
+    sortBy,
+  ]);
+
+  // 3) Map DB rows -> ProviderCard props shape
+  const cardModels = useMemo(() => {
+    return filteredProviders.map((p) => {
+      const loc = [p.neighborhood, p.location].filter(Boolean).join(", ") || "Local";
+
+      return {
+        id: p.id,
+        name: `Helper in ${p.location ?? "your area"}`, // until you add display_name
+        avatar: "/avatar-placeholder.png", // add this file to /public
+        rating: 5,
+        reviews: 0,
+        location: loc,
+        hourlyRate: Number(p.hourly_rate ?? 0),
+        services: p.services ?? [],
+        verified: !!p.verified,
+        available: !!p.available,
+        bio: p.bio ?? "",
+      };
+    });
+  }, [filteredProviders]);
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      
+
       <main className="pt-24 pb-16">
         <div className="container mx-auto px-4">
           {/* Search Header */}
@@ -158,24 +249,39 @@ const SearchPage = () => {
               {/* Results Header */}
               <div className="flex items-center justify-between mb-6">
                 <p className="text-muted-foreground">
-                  <span className="font-semibold text-foreground">{filteredProviders.length}</span>{" "}
+                  <span className="font-semibold text-foreground">
+                    {loading ? "…" : cardModels.length}
+                  </span>{" "}
                   helpers found
                   {selectedCategory !== "all" && (
-                    <span> in {categories.find((c) => c.id === selectedCategory)?.label}</span>
+                    <span> in {categories.find((c: any) => c.id === selectedCategory)?.label}</span>
                   )}
                 </p>
               </div>
 
               {/* Results Grid */}
-              {filteredProviders.length > 0 ? (
+              {loading ? (
+                <div className="text-muted-foreground">Loading helpers…</div>
+              ) : cardModels.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {filteredProviders.map((provider, index) => (
+                  {cardModels.map((provider, index) => (
                     <div
                       key={provider.id}
-                      className="animate-fade-in"
+                      className="animate-fade-in cursor-pointer"
                       style={{ animationDelay: `${index * 0.05}s` }}
+                      onClick={() => navigate(`/providers/${provider.id}`)}
                     >
-                      <ProviderCard {...provider} />
+                      <ProviderCard
+                        name={provider.name}
+                        avatar={provider.avatar}
+                        rating={provider.rating}
+                        reviews={provider.reviews}
+                        location={provider.location}
+                        hourlyRate={provider.hourlyRate}
+                        services={provider.services}
+                        verified={provider.verified}
+                        available={provider.available}
+                      />
                     </div>
                   ))}
                 </div>
