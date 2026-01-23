@@ -9,6 +9,7 @@ import { Search, MapPin, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 
+
 type ProviderProfileRow = {
   id: string;
   user_id: string;

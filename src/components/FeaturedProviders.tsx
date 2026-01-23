@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/supabase/client";
+import { supabase } from "@/integrations/supabase/client";
+
 import ProviderCard from "./ProviderCard";
 import { useNavigate } from "react-router-dom";
 
