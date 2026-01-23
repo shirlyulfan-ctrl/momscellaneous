@@ -10,6 +10,8 @@ import Search from "./pages/Search";
 import Auth from "./pages/Auth";
 import BecomeProvider from "./pages/BecomeProvider";
 import NotFound from "./pages/NotFound";
+import ProviderProfile from "@/pages/ProviderProfile";
+
 
 const queryClient = new QueryClient();
 
@@ -22,6 +24,8 @@ const App = () => (
           <Sonner />
           <BrowserRouter>
             <Routes>
+<Route path="/providers/:id" element={<ProviderProfile />} />
+
               <Route path="/" element={<Index />} />
               <Route path="/search" element={<Search />} />
               <Route path="/auth" element={<Auth />} />
