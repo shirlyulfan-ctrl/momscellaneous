@@ -5,10 +5,9 @@ import Footer from "@/components/Footer";
 import ProviderCard from "@/components/ProviderCard";
 import SearchFilters from "@/components/SearchFilters";
 import { categories, neighborhoods } from "@/data/providers";
-import { Search, MapPin, SlidersHorizontal } from "lucide-react";
+import { Search, MapPin, SlidersHorizontal, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-
 
 type ProviderProfileRow = {
   id: string;
@@ -33,6 +32,7 @@ const SearchPage = () => {
 
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [location, setLocation] = useState(initialLocation);
+  const [desiredDateTime, setDesiredDateTime] = useState(""); // NEW
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
   const [selectedNeighborhood, setSelectedNeighborhood] =
     useState("All Neighborhoods");
@@ -117,11 +117,19 @@ const SearchPage = () => {
 
     // Filter by neighborhood dropdown
     if (selectedNeighborhood !== "All Neighborhoods") {
-      result = result.filter((p) => (p.neighborhood ?? "") === selectedNeighborhood);
+      result = result.filter(
+        (p) => (p.neighborhood ?? "") === selectedNeighborhood
+      );
     }
 
-    // Filter by availability
+    // Filter by availability toggle
     if (showAvailableOnly) {
+      result = result.filter((p) => !!p.available);
+    }
+
+    // NEW: If user picked a datetime, require providers marked available (starter behavior)
+    // Later we’ll replace this with provider_availability time-slot filtering.
+    if (desiredDateTime) {
       result = result.filter((p) => !!p.available);
     }
 
@@ -153,12 +161,14 @@ const SearchPage = () => {
     selectedNeighborhood,
     showAvailableOnly,
     sortBy,
+    desiredDateTime, // NEW
   ]);
 
   // 3) Map DB rows -> ProviderCard props shape
   const cardModels = useMemo(() => {
     return filteredProviders.map((p) => {
-      const loc = [p.neighborhood, p.location].filter(Boolean).join(", ") || "Local";
+      const loc =
+        [p.neighborhood, p.location].filter(Boolean).join(", ") || "Local";
 
       return {
         id: p.id,
@@ -195,6 +205,7 @@ const SearchPage = () => {
           {/* Search Bar */}
           <div className="bg-card rounded-2xl p-4 shadow-card mb-6">
             <div className="flex flex-col md:flex-row gap-3">
+              {/* What do you need */}
               <div className="flex-1 flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
                 <Search className="w-5 h-5 text-muted-foreground shrink-0" />
                 <input
@@ -206,6 +217,7 @@ const SearchPage = () => {
                 />
               </div>
 
+              {/* Location */}
               <div className="flex-1 flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
                 <MapPin className="w-5 h-5 text-muted-foreground shrink-0" />
                 <input
@@ -213,6 +225,17 @@ const SearchPage = () => {
                   placeholder="Your neighborhood"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
+                  className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+
+              {/* NEW: Date/Time */}
+              <div className="flex-1 flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
+                <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
+                <input
+                  type="datetime-local"
+                  value={desiredDateTime}
+                  onChange={(e) => setDesiredDateTime(e.target.value)}
                   className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground"
                 />
               </div>
@@ -230,7 +253,11 @@ const SearchPage = () => {
 
           <div className="flex flex-col lg:flex-row gap-6">
             {/* Filters Sidebar */}
-            <aside className={`lg:w-72 shrink-0 ${showFilters ? "block" : "hidden lg:block"}`}>
+            <aside
+              className={`lg:w-72 shrink-0 ${
+                showFilters ? "block" : "hidden lg:block"
+              }`}
+            >
               <SearchFilters
                 categories={categories}
                 neighborhoods={neighborhoods}
@@ -255,7 +282,14 @@ const SearchPage = () => {
                   </span>{" "}
                   helpers found
                   {selectedCategory !== "all" && (
-                    <span> in {categories.find((c: any) => c.id === selectedCategory)?.label}</span>
+                    <span>
+                      {" "}
+                      in{" "}
+                      {
+                        categories.find((c: any) => c.id === selectedCategory)
+                          ?.label
+                      }
+                    </span>
                   )}
                 </p>
               </div>
@@ -295,7 +329,8 @@ const SearchPage = () => {
                     No helpers found
                   </h3>
                   <p className="text-muted-foreground max-w-md mx-auto">
-                    Try adjusting your search or filters to find more providers in your area.
+                    Try adjusting your search or filters to find more providers
+                    in your area.
                   </p>
                 </div>
               )}
