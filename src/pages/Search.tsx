@@ -23,16 +23,25 @@ type ProviderProfileRow = {
   created_at: string;
 };
 
+type ProviderAvailabilityRow = {
+  provider_id: string;
+};
+
 const SearchPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
   const initialQuery = searchParams.get("q") || "";
   const initialLocation = searchParams.get("location") || "";
   const initialCategory = searchParams.get("category") || "all";
 
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [location, setLocation] = useState(initialLocation);
-  const [desiredDateTime, setDesiredDateTime] = useState(""); // NEW
+
+  // NEW: start/end time window search
+  const [startDateTime, setStartDateTime] = useState("");
+  const [endDateTime, setEndDateTime] = useState("");
+
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
   const [selectedNeighborhood, setSelectedNeighborhood] =
     useState("All Neighborhoods");
@@ -43,10 +52,25 @@ const SearchPage = () => {
   const [rows, setRows] = useState<ProviderProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // NEW: availability filter results from provider_availability
+  const [availabilityProviderIds, setAvailabilityProviderIds] = useState<Set<string> | null>(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+
+  const hasWindow = !!startDateTime && !!endDateTime;
+
+  const isWindowInvalid = useMemo(() => {
+    if (!hasWindow) return false;
+    const startMs = new Date(startDateTime).getTime();
+    const endMs = new Date(endDateTime).getTime();
+    return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs < startMs;
+  }, [hasWindow, startDateTime, endDateTime]);
+
   // 1) Load providers from Supabase
   useEffect(() => {
     const loadProviders = async () => {
       setLoading(true);
+
       const { data, error } = await supabase
         .from("provider_profiles")
         .select(
@@ -60,15 +84,69 @@ const SearchPage = () => {
       } else {
         setRows((data ?? []) as ProviderProfileRow[]);
       }
+
       setLoading(false);
     };
 
     loadProviders();
   }, []);
 
-  // 2) Filter + sort (client-side, keeps your current UX)
+  // 2) If user selects a start+end window, fetch providers who have an availability slot covering the whole window
+  useEffect(() => {
+    const fetchAvailabilityMatches = async () => {
+      setAvailabilityError(null);
+
+      // If window not set, remove the availability constraint
+      if (!hasWindow) {
+        setAvailabilityProviderIds(null);
+        return;
+      }
+
+      // If invalid window, don’t query; show empty results constraint
+      if (isWindowInvalid) {
+        setAvailabilityProviderIds(new Set());
+        setAvailabilityError("End time must be after start time.");
+        return;
+      }
+
+      const startISO = new Date(startDateTime).toISOString();
+      const endISO = new Date(endDateTime).toISOString();
+
+      setAvailabilityLoading(true);
+
+      const { data, error } = await supabase
+        .from("provider_availability")
+        .select("provider_id")
+        .lte("start_at", startISO)
+        .gte("end_at", endISO);
+
+      if (error) {
+        console.error("Failed to load provider_availability:", error);
+        setAvailabilityProviderIds(new Set());
+        setAvailabilityError(
+          "Couldn’t check availability yet. (Did you create the provider_availability table?)"
+        );
+      } else {
+        const ids = new Set((data as ProviderAvailabilityRow[] | null)?.map((r) => r.provider_id) ?? []);
+        setAvailabilityProviderIds(ids);
+      }
+
+      setAvailabilityLoading(false);
+    };
+
+    fetchAvailabilityMatches();
+  }, [hasWindow, isWindowInvalid, startDateTime, endDateTime]);
+
+  // 3) Filter + sort (client-side, keeps your current UX)
   const filteredProviders = useMemo(() => {
     let result = [...rows];
+
+    // NEW: availability window constraint
+    // If window is set, only show providers whose id is in availabilityProviderIds
+    if (hasWindow) {
+      const allowed = availabilityProviderIds ?? new Set<string>();
+      result = result.filter((p) => allowed.has(p.id));
+    }
 
     // Filter by search query (search bio/services/location/neighborhood)
     if (searchQuery.trim()) {
@@ -122,14 +200,8 @@ const SearchPage = () => {
       );
     }
 
-    // Filter by availability toggle
+    // Filter by availability toggle (your existing boolean)
     if (showAvailableOnly) {
-      result = result.filter((p) => !!p.available);
-    }
-
-    // NEW: If user picked a datetime, require providers marked available (starter behavior)
-    // Later we’ll replace this with provider_availability time-slot filtering.
-    if (desiredDateTime) {
       result = result.filter((p) => !!p.available);
     }
 
@@ -155,16 +227,17 @@ const SearchPage = () => {
     return result;
   }, [
     rows,
+    hasWindow,
+    availabilityProviderIds,
     searchQuery,
     location,
     selectedCategory,
     selectedNeighborhood,
     showAvailableOnly,
     sortBy,
-    desiredDateTime, // NEW
   ]);
 
-  // 3) Map DB rows -> ProviderCard props shape
+  // 4) Map DB rows -> ProviderCard props shape
   const cardModels = useMemo(() => {
     return filteredProviders.map((p) => {
       const loc =
@@ -185,6 +258,8 @@ const SearchPage = () => {
       };
     });
   }, [filteredProviders]);
+
+  const showCountLoading = loading || (hasWindow && availabilityLoading);
 
   return (
     <div className="min-h-screen bg-background">
@@ -229,13 +304,24 @@ const SearchPage = () => {
                 />
               </div>
 
-              {/* NEW: Date/Time */}
+              {/* Start time */}
               <div className="flex-1 flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
                 <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
                 <input
                   type="datetime-local"
-                  value={desiredDateTime}
-                  onChange={(e) => setDesiredDateTime(e.target.value)}
+                  value={startDateTime}
+                  onChange={(e) => setStartDateTime(e.target.value)}
+                  className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+
+              {/* End time */}
+              <div className="flex-1 flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
+                <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
+                <input
+                  type="datetime-local"
+                  value={endDateTime}
+                  onChange={(e) => setEndDateTime(e.target.value)}
                   className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground"
                 />
               </div>
@@ -249,6 +335,17 @@ const SearchPage = () => {
                 Filters
               </Button>
             </div>
+
+            {/* Availability status/errors */}
+            {hasWindow && (availabilityLoading || availabilityError) && (
+              <div className="mt-3 text-sm">
+                {availabilityLoading ? (
+                  <span className="text-muted-foreground">Checking availability…</span>
+                ) : availabilityError ? (
+                  <span className="text-destructive">{availabilityError}</span>
+                ) : null}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col lg:flex-row gap-6">
@@ -278,7 +375,7 @@ const SearchPage = () => {
               <div className="flex items-center justify-between mb-6">
                 <p className="text-muted-foreground">
                   <span className="font-semibold text-foreground">
-                    {loading ? "…" : cardModels.length}
+                    {showCountLoading ? "…" : cardModels.length}
                   </span>{" "}
                   helpers found
                   {selectedCategory !== "all" && (
@@ -297,6 +394,8 @@ const SearchPage = () => {
               {/* Results Grid */}
               {loading ? (
                 <div className="text-muted-foreground">Loading helpers…</div>
+              ) : hasWindow && availabilityLoading ? (
+                <div className="text-muted-foreground">Checking availability…</div>
               ) : cardModels.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {cardModels.map((provider, index) => (
@@ -332,6 +431,12 @@ const SearchPage = () => {
                     Try adjusting your search or filters to find more providers
                     in your area.
                   </p>
+                  {hasWindow && (
+                    <p className="text-muted-foreground max-w-md mx-auto mt-2 text-sm">
+                      Tip: add availability slots for providers in the{" "}
+                      <code>provider_availability</code> table to match your selected time window.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
