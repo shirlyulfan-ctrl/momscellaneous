@@ -263,8 +263,8 @@ const BecomeProvider = () => {
         const { error: uploadError } = await supabase.storage.from("provider-media").upload(fileName, file);
         if (uploadError) throw uploadError;
 
-        const { data: public } = supabase.storage.from("provider-media").getPublicUrl(fileName);
-        const publicUrl = public.publicUrl;
+        const publicUrl = supabase.storage.from("provider-media").getPublicUrl(fileName).data.publicUrl;
+
 
         const { data: mediaRecord, error: insertError } = await supabase
           .from("provider_media")
