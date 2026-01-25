@@ -305,26 +305,33 @@ const SearchPage = () => {
               </div>
 
               {/* Start time */}
-              <div className="flex-1 flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
-                <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
-                <input
-                  type="datetime-local"
-                  value={startDateTime}
-                  onChange={(e) => setStartDateTime(e.target.value)}
-                  className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground"
-                />
-              </div>
+<div className="flex-1 bg-muted rounded-xl px-4 py-2">
+  <div className="text-xs text-muted-foreground mb-1">Start time</div>
+  <div className="flex items-center gap-3">
+    <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
+    <input
+      type="datetime-local"
+      value={startDateTime}
+      onChange={(e) => setStartDateTime(e.target.value)}
+      className="w-full bg-transparent border-none outline-none text-foreground"
+    />
+  </div>
+</div>
 
-              {/* End time */}
-              <div className="flex-1 flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
-                <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
-                <input
-                  type="datetime-local"
-                  value={endDateTime}
-                  onChange={(e) => setEndDateTime(e.target.value)}
-                  className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground"
-                />
-              </div>
+{/* End time */}
+<div className="flex-1 bg-muted rounded-xl px-4 py-2">
+  <div className="text-xs text-muted-foreground mb-1">End time</div>
+  <div className="flex items-center gap-3">
+    <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
+    <input
+      type="datetime-local"
+      value={endDateTime}
+      onChange={(e) => setEndDateTime(e.target.value)}
+      className="w-full bg-transparent border-none outline-none text-foreground"
+    />
+  </div>
+</div>
+
 
               <Button
                 variant="outline"

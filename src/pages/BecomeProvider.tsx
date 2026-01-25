@@ -1,3 +1,7 @@
+import { useEffect, useState } from "react";
+import AvailabilityForm from "@/components/AvailabilityForm";
+import { supabase } from "@/integrations/supabase/client";
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,6 +19,81 @@ import { Loader2, Upload, X, Check, Image, Video, Baby, DollarSign, MapPin } fro
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 import { categories } from '@/data/providers';
+
+const [providerProfileId, setProviderProfileId] = useState<string | null>(null);
+const [loadingProvider, setLoadingProvider] = useState(true);
+const [providerError, setProviderError] = useState<string | null>(null);
+
+useEffect(() => {
+  const ensureProviderProfile = async () => {
+    setLoadingProvider(true);
+    setProviderError(null);
+
+    const { data: authData, error: authErr } = await supabase.auth.getUser();
+    const userId = authData?.user?.id;
+
+    if (authErr || !userId) {
+      setProviderError("Please log in to create a provider profile.");
+      setProviderProfileId(null);
+      setLoadingProvider(false);
+      return;
+    }
+
+    // 1) Try to find existing provider profile for this user
+    const { data: existing, error: findErr } = await supabase
+      .from("provider_profiles")
+      .select("id")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (findErr) {
+      console.error(findErr);
+      setProviderError("Could not load your provider profile.");
+      setProviderProfileId(null);
+      setLoadingProvider(false);
+      return;
+    }
+
+    if (existing?.id) {
+      setProviderProfileId(existing.id);
+      setLoadingProvider(false);
+      return;
+    }
+
+    // 2) If none exists, create a minimal one (so availability can attach to it)
+    const { data: created, error: createErr } = await supabase
+      .from("provider_profiles")
+      .insert({
+        user_id: userId,
+        bio: "",
+        location: "",
+        neighborhood: "",
+        hourly_rate: 0,
+        services: [],
+        verified: false,
+        available: true,
+        years_experience: 0,
+      })
+      .select("id")
+      .single();
+
+    if (createErr) {
+      console.error(createErr);
+      setProviderError(
+        "Could not create your provider profile. (Check RLS/policies or table permissions.)"
+      );
+      setProviderProfileId(null);
+      setLoadingProvider(false);
+      return;
+    }
+
+    setProviderProfileId(created.id);
+    setLoadingProvider(false);
+  };
+
+  ensureProviderProfile();
+}, []);
+
 
 const serviceOptions = [
   "Babysitting",
@@ -383,6 +462,17 @@ const BecomeProvider = () => {
               </div>
             </CardContent>
           </Card>
+
+<div className="mt-10">
+  {loadingProvider ? (
+    <div className="text-muted-foreground">Loading your provider profile…</div>
+  ) : providerError ? (
+    <div className="text-destructive">{providerError}</div>
+  ) : providerProfileId ? (
+    <AvailabilityForm providerId={providerProfileId} />
+  ) : null}
+</div>
+
 
           {/* Rates */}
           <Card>
