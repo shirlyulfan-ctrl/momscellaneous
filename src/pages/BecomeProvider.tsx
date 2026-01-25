@@ -1,99 +1,27 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import Header from "@/components/Header";
+import Footer from "@/components/Footer";
+
 import AvailabilityForm from "@/components/AvailabilityForm";
 import { supabase } from "@/integrations/supabase/client";
 
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
-import { useLanguage } from '@/contexts/LanguageContext';
-import { supabase } from '@/integrations/supabase/client';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { useToast } from '@/hooks/use-toast';
-import { Loader2, Upload, X, Check, Image, Video, Baby, DollarSign, MapPin } from 'lucide-react';
-import Header from '@/components/Header';
-import Footer from '@/components/Footer';
-import { categories } from '@/data/providers';
+import { useAuth } from "@/contexts/AuthContext";
+import { useLanguage } from "@/contexts/LanguageContext";
 
-const [providerProfileId, setProviderProfileId] = useState<string | null>(null);
-const [loadingProvider, setLoadingProvider] = useState(true);
-const [providerError, setProviderError] = useState<string | null>(null);
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
-useEffect(() => {
-  const ensureProviderProfile = async () => {
-    setLoadingProvider(true);
-    setProviderError(null);
+import { useToast } from "@/hooks/use-toast";
+import { Loader2, Upload, X, Check, Image, Video, Baby, DollarSign, MapPin } from "lucide-react";
 
-    const { data: authData, error: authErr } = await supabase.auth.getUser();
-    const userId = authData?.user?.id;
-
-    if (authErr || !userId) {
-      setProviderError("Please log in to create a provider profile.");
-      setProviderProfileId(null);
-      setLoadingProvider(false);
-      return;
-    }
-
-    // 1) Try to find existing provider profile for this user
-    const { data: existing, error: findErr } = await supabase
-      .from("provider_profiles")
-      .select("id")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (findErr) {
-      console.error(findErr);
-      setProviderError("Could not load your provider profile.");
-      setProviderProfileId(null);
-      setLoadingProvider(false);
-      return;
-    }
-
-    if (existing?.id) {
-      setProviderProfileId(existing.id);
-      setLoadingProvider(false);
-      return;
-    }
-
-    // 2) If none exists, create a minimal one (so availability can attach to it)
-    const { data: created, error: createErr } = await supabase
-      .from("provider_profiles")
-      .insert({
-        user_id: userId,
-        bio: "",
-        location: "",
-        neighborhood: "",
-        hourly_rate: 0,
-        services: [],
-        verified: false,
-        available: true,
-        years_experience: 0,
-      })
-      .select("id")
-      .single();
-
-    if (createErr) {
-      console.error(createErr);
-      setProviderError(
-        "Could not create your provider profile. (Check RLS/policies or table permissions.)"
-      );
-      setProviderProfileId(null);
-      setLoadingProvider(false);
-      return;
-    }
-
-    setProviderProfileId(created.id);
-    setLoadingProvider(false);
-  };
-
-  ensureProviderProfile();
-}, []);
-
+import { categories } from "@/data/providers";
 
 const serviceOptions = [
   "Babysitting",
@@ -129,6 +57,12 @@ const BecomeProvider = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // --- NEW: provider profile ID for availability ---
+  const [providerProfileId, setProviderProfileId] = useState<string | null>(null);
+  const [loadingProvider, setLoadingProvider] = useState(true);
+  const [providerError, setProviderError] = useState<string | null>(null);
+
+  // Existing state
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [existingProfile, setExistingProfile] = useState<any>(null);
@@ -136,89 +70,183 @@ const BecomeProvider = () => {
   const [uploadingMedia, setUploadingMedia] = useState(false);
 
   // Form state
-  const [bio, setBio] = useState('');
-  const [location, setLocation] = useState('');
-  const [neighborhood, setNeighborhood] = useState('');
-  const [hourlyRate, setHourlyRate] = useState('');
-  const [taskRate, setTaskRate] = useState('');
+  const [bio, setBio] = useState("");
+  const [location, setLocation] = useState("");
+  const [neighborhood, setNeighborhood] = useState("");
+  const [hourlyRate, setHourlyRate] = useState("");
+  const [taskRate, setTaskRate] = useState("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [yearsExperience, setYearsExperience] = useState('');
+  const [yearsExperience, setYearsExperience] = useState("");
   const [childFriendly, setChildFriendly] = useState(false);
   const [canBringChild, setCanBringChild] = useState(false);
-  const [termsAndConditions, setTermsAndConditions] = useState('');
+  const [termsAndConditions, setTermsAndConditions] = useState("");
   const [available, setAvailable] = useState(true);
 
+  // Redirect to auth if not logged in
   useEffect(() => {
     if (!authLoading && !user) {
-      navigate('/auth');
+      navigate("/auth");
     }
   }, [user, authLoading, navigate]);
 
+  // Load existing profile info to edit
   useEffect(() => {
     if (user) {
       loadExistingProfile();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const loadExistingProfile = async () => {
     if (!user) return;
-    
+
     setIsLoading(true);
     try {
       const { data: profile, error } = await supabase
-        .from('provider_profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
+        .from("provider_profiles")
+        .select("*")
+        .eq("user_id", user.id)
+        .limit(1);
 
       if (error) throw error;
 
-      if (profile) {
-        setExistingProfile(profile);
-        setBio(profile.bio || '');
-        setLocation(profile.location || '');
-        setNeighborhood(profile.neighborhood || '');
-        setHourlyRate(profile.hourly_rate?.toString() || '');
-        setTaskRate(profile.task_rate?.toString() || '');
-        setSelectedServices(profile.services || []);
-        setSelectedCategories(profile.categories || []);
-        setYearsExperience(profile.years_experience?.toString() || '');
-        setChildFriendly(profile.child_friendly || false);
-        setCanBringChild(profile.can_bring_child || false);
-        setTermsAndConditions(profile.terms_and_conditions || '');
-        setAvailable(profile.available ?? true);
+      const row = profile?.[0] ?? null;
+
+      if (row) {
+        setExistingProfile(row);
+        setBio(row.bio || "");
+        setLocation(row.location || "");
+        setNeighborhood(row.neighborhood || "");
+        setHourlyRate(row.hourly_rate?.toString() || "");
+        setTaskRate(row.task_rate?.toString() || "");
+        setSelectedServices(row.services || []);
+        setSelectedCategories(row.categories || []);
+        setYearsExperience(row.years_experience?.toString() || "");
+        setChildFriendly(row.child_friendly || false);
+        setCanBringChild(row.can_bring_child || false);
+        setTermsAndConditions(row.terms_and_conditions || "");
+        setAvailable(row.available ?? true);
 
         // Load media
         const { data: media } = await supabase
-          .from('provider_media')
-          .select('*')
-          .eq('provider_id', profile.id);
-        
+          .from("provider_media")
+          .select("*")
+          .eq("provider_id", row.id);
+
         if (media) setMediaFiles(media);
       }
     } catch (error) {
-      console.error('Error loading profile:', error);
+      console.error("Error loading profile:", error);
     } finally {
       setIsLoading(false);
     }
   };
 
+  // --- NEW: ensure there is a provider_profiles row and grab its ID ---
+  useEffect(() => {
+    let cancelled = false;
+
+    const ensureProviderProfile = async () => {
+      try {
+        setLoadingProvider(true);
+        setProviderError(null);
+
+        // must be logged in
+        const { data: authData, error: authErr } = await supabase.auth.getUser();
+        const userId = authData?.user?.id;
+
+        if (authErr || !userId) {
+          if (!cancelled) {
+            setProviderError("Please log in to create a provider profile.");
+            setProviderProfileId(null);
+            setLoadingProvider(false);
+          }
+          return;
+        }
+
+        // Find existing provider profile by user_id
+        const { data: found, error: findErr } = await supabase
+          .from("provider_profiles")
+          .select("id")
+          .eq("user_id", userId)
+          .limit(1);
+
+        if (findErr) {
+          console.error(findErr);
+          if (!cancelled) {
+            setProviderError("Could not load your provider profile.");
+            setProviderProfileId(null);
+            setLoadingProvider(false);
+          }
+          return;
+        }
+
+        const existing = found?.[0];
+
+        if (existing?.id) {
+          if (!cancelled) {
+            setProviderProfileId(existing.id);
+            setLoadingProvider(false);
+          }
+          return;
+        }
+
+        // Create minimal profile if none exists (so availability can attach)
+        const { data: created, error: createErr } = await supabase
+          .from("provider_profiles")
+          .insert({
+            user_id: userId,
+            bio: "",
+            location: "",
+            neighborhood: "",
+            hourly_rate: 0,
+            services: [],
+            verified: false,
+            available: true,
+            years_experience: 0,
+          })
+          .select("id")
+          .single();
+
+        if (createErr) {
+          console.error(createErr);
+          if (!cancelled) {
+            setProviderError("Could not create your provider profile (permissions/RLS?).");
+            setProviderProfileId(null);
+            setLoadingProvider(false);
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          setProviderProfileId(created.id);
+          setLoadingProvider(false);
+        }
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) {
+          setProviderError("Unexpected error loading provider profile.");
+          setProviderProfileId(null);
+          setLoadingProvider(false);
+        }
+      }
+    };
+
+    ensureProviderProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleServiceToggle = (service: string) => {
-    setSelectedServices(prev =>
-      prev.includes(service)
-        ? prev.filter(s => s !== service)
-        : [...prev, service]
-    );
+    setSelectedServices((prev) => (prev.includes(service) ? prev.filter((s) => s !== service) : [...prev, service]));
   };
 
   const handleCategoryToggle = (categoryId: string) => {
-    if (categoryId === 'all') return;
-    setSelectedCategories(prev =>
-      prev.includes(categoryId)
-        ? prev.filter(c => c !== categoryId)
-        : [...prev, categoryId]
-    );
+    if (categoryId === "all") return;
+    setSelectedCategories((prev) => (prev.includes(categoryId) ? prev.filter((c) => c !== categoryId) : [...prev, categoryId]));
   };
 
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -228,25 +256,21 @@ const BecomeProvider = () => {
     setUploadingMedia(true);
     try {
       for (const file of Array.from(files)) {
-        const isVideo = file.type.startsWith('video/');
-        const fileExt = file.name.split('.').pop();
+        const isVideo = file.type.startsWith("video/");
+        const fileExt = file.name.split(".").pop();
         const fileName = `${user.id}/${Date.now()}.${fileExt}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from('provider-media')
-          .upload(fileName, file);
-
+        const { error: uploadError } = await supabase.storage.from("provider-media").upload(fileName, file);
         if (uploadError) throw uploadError;
 
-        const { data: { publicUrl } } = supabase.storage
-          .from('provider-media')
-          .getPublicUrl(fileName);
+        const { data: public } = supabase.storage.from("provider-media").getPublicUrl(fileName);
+        const publicUrl = public.publicUrl;
 
         const { data: mediaRecord, error: insertError } = await supabase
-          .from('provider_media')
+          .from("provider_media")
           .insert({
             provider_id: existingProfile.id,
-            media_type: isVideo ? 'video' : 'photo',
+            media_type: isVideo ? "video" : "photo",
             url: publicUrl,
             is_primary: mediaFiles.length === 0,
           })
@@ -255,7 +279,7 @@ const BecomeProvider = () => {
 
         if (insertError) throw insertError;
 
-        setMediaFiles(prev => [...prev, mediaRecord]);
+        setMediaFiles((prev) => [...prev, mediaRecord]);
       }
 
       toast({
@@ -263,7 +287,7 @@ const BecomeProvider = () => {
         description: "Media uploaded successfully!",
       });
     } catch (error) {
-      console.error('Error uploading media:', error);
+      console.error("Error uploading media:", error);
       toast({
         title: t.common.error,
         description: "Failed to upload media",
@@ -276,20 +300,16 @@ const BecomeProvider = () => {
 
   const handleDeleteMedia = async (mediaId: string) => {
     try {
-      const { error } = await supabase
-        .from('provider_media')
-        .delete()
-        .eq('id', mediaId);
-
+      const { error } = await supabase.from("provider_media").delete().eq("id", mediaId);
       if (error) throw error;
 
-      setMediaFiles(prev => prev.filter(m => m.id !== mediaId));
+      setMediaFiles((prev) => prev.filter((m) => m.id !== mediaId));
       toast({
         title: t.common.success,
         description: "Media deleted successfully!",
       });
     } catch (error) {
-      console.error('Error deleting media:', error);
+      console.error("Error deleting media:", error);
       toast({
         title: t.common.error,
         description: "Failed to delete media",
@@ -300,23 +320,14 @@ const BecomeProvider = () => {
 
   const handleSetPrimary = async (mediaId: string) => {
     try {
-      // Unset all as primary first
-      await supabase
-        .from('provider_media')
-        .update({ is_primary: false })
-        .eq('provider_id', existingProfile.id);
+      if (!existingProfile?.id) return;
 
-      // Set the selected one as primary
-      await supabase
-        .from('provider_media')
-        .update({ is_primary: true })
-        .eq('id', mediaId);
+      await supabase.from("provider_media").update({ is_primary: false }).eq("provider_id", existingProfile.id);
+      await supabase.from("provider_media").update({ is_primary: true }).eq("id", mediaId);
 
-      setMediaFiles(prev =>
-        prev.map(m => ({ ...m, is_primary: m.id === mediaId }))
-      );
+      setMediaFiles((prev) => prev.map((m) => ({ ...m, is_primary: m.id === mediaId })));
     } catch (error) {
-      console.error('Error setting primary:', error);
+      console.error("Error setting primary:", error);
     }
   };
 
@@ -325,7 +336,7 @@ const BecomeProvider = () => {
 
     setIsSaving(true);
     try {
-      const profileData = {
+      const profileData: any = {
         user_id: user.id,
         bio,
         location,
@@ -342,35 +353,22 @@ const BecomeProvider = () => {
       };
 
       if (existingProfile) {
-        const { error } = await supabase
-          .from('provider_profiles')
-          .update(profileData)
-          .eq('id', existingProfile.id);
-
+        const { error } = await supabase.from("provider_profiles").update(profileData).eq("id", existingProfile.id);
         if (error) throw error;
       } else {
-        const { data, error } = await supabase
-          .from('provider_profiles')
-          .insert(profileData)
-          .select()
-          .single();
-
+        const { data, error } = await supabase.from("provider_profiles").insert(profileData).select().single();
         if (error) throw error;
         setExistingProfile(data);
       }
 
-      // Update profiles table to mark as provider
-      await supabase
-        .from('profiles')
-        .update({ is_provider: true })
-        .eq('user_id', user.id);
+      await supabase.from("profiles").update({ is_provider: true }).eq("user_id", user.id);
 
       toast({
         title: t.common.success,
         description: t.provider.profileSaved,
       });
     } catch (error) {
-      console.error('Error saving profile:', error);
+      console.error("Error saving profile:", error);
       toast({
         title: t.common.error,
         description: t.provider.profileError,
@@ -399,9 +397,7 @@ const BecomeProvider = () => {
       <main className="flex-1 py-12 px-4">
         <div className="max-w-3xl mx-auto space-y-8">
           <div className="text-center">
-            <h1 className="text-3xl font-bold">
-              {existingProfile ? t.provider.editProfile : t.provider.createProfile}
-            </h1>
+            <h1 className="text-3xl font-bold">{existingProfile ? t.provider.editProfile : t.provider.createProfile}</h1>
           </div>
 
           {/* Basic Info */}
@@ -462,17 +458,6 @@ const BecomeProvider = () => {
               </div>
             </CardContent>
           </Card>
-
-<div className="mt-10">
-  {loadingProvider ? (
-    <div className="text-muted-foreground">Loading your provider profile…</div>
-  ) : providerError ? (
-    <div className="text-destructive">{providerError}</div>
-  ) : providerProfileId ? (
-    <AvailabilityForm providerId={providerProfileId} />
-  ) : null}
-</div>
-
 
           {/* Rates */}
           <Card>
@@ -535,17 +520,19 @@ const BecomeProvider = () => {
               <div className="space-y-2">
                 <Label>{t.provider.categories}</Label>
                 <div className="flex flex-wrap gap-2">
-                  {categories.filter(c => c.id !== 'all').map((category) => (
-                    <Badge
-                      key={category.id}
-                      variant={selectedCategories.includes(category.id) ? "default" : "outline"}
-                      className="cursor-pointer"
-                      onClick={() => handleCategoryToggle(category.id)}
-                    >
-                      {selectedCategories.includes(category.id) && <Check className="h-3 w-3 mr-1" />}
-                      {category.label}
-                    </Badge>
-                  ))}
+                  {categories
+                    .filter((c) => c.id !== "all")
+                    .map((category) => (
+                      <Badge
+                        key={category.id}
+                        variant={selectedCategories.includes(category.id) ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => handleCategoryToggle(category.id)}
+                      >
+                        {selectedCategories.includes(category.id) && <Check className="h-3 w-3 mr-1" />}
+                        {category.label}
+                      </Badge>
+                    ))}
                 </div>
               </div>
             </CardContent>
@@ -563,27 +550,17 @@ const BecomeProvider = () => {
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label>{t.provider.childFriendly}</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {t.provider.childFriendlyDesc}
-                  </p>
+                  <p className="text-sm text-muted-foreground">{t.provider.childFriendlyDesc}</p>
                 </div>
-                <Switch
-                  checked={childFriendly}
-                  onCheckedChange={setChildFriendly}
-                />
+                <Switch checked={childFriendly} onCheckedChange={setChildFriendly} />
               </div>
 
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label>{t.provider.canBringChild}</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {t.provider.canBringChildDesc}
-                  </p>
+                  <p className="text-sm text-muted-foreground">{t.provider.canBringChildDesc}</p>
                 </div>
-                <Switch
-                  checked={canBringChild}
-                  onCheckedChange={setCanBringChild}
-                />
+                <Switch checked={canBringChild} onCheckedChange={setCanBringChild} />
               </div>
             </CardContent>
           </Card>
@@ -615,45 +592,29 @@ const BecomeProvider = () => {
             </CardHeader>
             <CardContent className="space-y-4">
               {!existingProfile ? (
-                <p className="text-sm text-muted-foreground">
-                  Save your profile first to upload media.
-                </p>
+                <p className="text-sm text-muted-foreground">Save your profile first to upload media.</p>
               ) : (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {mediaFiles.map((media) => (
                       <div key={media.id} className="relative group">
-                        {media.media_type === 'video' ? (
+                        {media.media_type === "video" ? (
                           <div className="aspect-square bg-muted rounded-lg flex items-center justify-center">
                             <Video className="h-8 w-8 text-muted-foreground" />
                           </div>
                         ) : (
-                          <img
-                            src={media.url}
-                            alt=""
-                            className="aspect-square object-cover rounded-lg"
-                          />
+                          <img src={media.url} alt="" className="aspect-square object-cover rounded-lg" />
                         )}
-                        {media.is_primary && (
-                          <Badge className="absolute top-2 left-2 text-xs">
-                            {t.provider.primaryPhoto}
-                          </Badge>
-                        )}
+
+                        {media.is_primary && <Badge className="absolute top-2 left-2 text-xs">{t.provider.primaryPhoto}</Badge>}
+
                         <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
                           {!media.is_primary && (
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => handleSetPrimary(media.id)}
-                            >
+                            <Button size="sm" variant="secondary" onClick={() => handleSetPrimary(media.id)}>
                               <Check className="h-4 w-4" />
                             </Button>
                           )}
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => handleDeleteMedia(media.id)}
-                          >
+                          <Button size="sm" variant="destructive" onClick={() => handleDeleteMedia(media.id)}>
                             <X className="h-4 w-4" />
                           </Button>
                         </div>
@@ -666,9 +627,7 @@ const BecomeProvider = () => {
                       ) : (
                         <>
                           <Upload className="h-8 w-8 text-muted-foreground mb-2" />
-                          <span className="text-sm text-muted-foreground">
-                            {t.provider.uploadMedia}
-                          </span>
+                          <span className="text-sm text-muted-foreground">{t.provider.uploadMedia}</span>
                         </>
                       )}
                       <input
@@ -686,31 +645,32 @@ const BecomeProvider = () => {
             </CardContent>
           </Card>
 
-          {/* Availability */}
+          {/* Availability toggle (existing) */}
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label>{t.provider.available}</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {t.provider.availableDesc}
-                  </p>
+                  <p className="text-sm text-muted-foreground">{t.provider.availableDesc}</p>
                 </div>
-                <Switch
-                  checked={available}
-                  onCheckedChange={setAvailable}
-                />
+                <Switch checked={available} onCheckedChange={setAvailable} />
               </div>
             </CardContent>
           </Card>
 
+          {/* NEW: Availability Slots + Recurring */}
+          <div className="mt-2">
+            {loadingProvider ? (
+              <div className="text-muted-foreground">Loading your provider profile…</div>
+            ) : providerError ? (
+              <div className="text-destructive">{providerError}</div>
+            ) : providerProfileId ? (
+              <AvailabilityForm providerId={providerProfileId} />
+            ) : null}
+          </div>
+
           {/* Save Button */}
-          <Button
-            size="lg"
-            className="w-full"
-            onClick={handleSaveProfile}
-            disabled={isSaving}
-          >
+          <Button size="lg" className="w-full" onClick={handleSaveProfile} disabled={isSaving}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {t.provider.saveProfile}
           </Button>
