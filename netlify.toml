@@ -1,0 +1,9 @@
+[build]
+  command = "bun run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+
+[functions."release-payouts"]
+  schedule = "*/15 * * * *"

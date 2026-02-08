@@ -51,6 +51,20 @@ const serviceOptions = [
   "Birthday party help",
 ];
 
+const connectStripe = async () => {
+  const res = await fetch("/.netlify/functions/create-connect-account", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider_profile_id: existingProfile.id }),
+  });
+  const json = await res.json();
+  window.location.href = json.url;
+};
+<Button variant="outline" onClick={connectStripe}>
+  Connect Stripe for Payouts
+</Button>
+
+
 const BecomeProvider = () => {
   const { user, loading: authLoading } = useAuth();
   const { t } = useLanguage();
