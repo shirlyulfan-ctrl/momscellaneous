@@ -27,20 +27,19 @@ export const handler = async (event: any) => {
 
     // Load booking + provider stripe account
     const { data: booking, error } = await supabase
-      .from("bookings")
-      .select(
-        `
-        id,
-        customer_total,
-        status,
-        provider_id,
-        provider_profiles:provider_id (
-          stripe_account_id
-        )
-      `
-      )
-      .eq("id", booking_id)
-      .single();
+  .from("bookings")
+  .select(`
+    id,
+    customer_total,
+    status,
+    provider_id,
+    provider:provider_profiles!bookings_provider_id_fkey (
+      stripe_account_id
+    )
+  `)
+  .eq("id", booking_id)
+  .single();
+
 
     if (error || !booking) {
       console.error("Booking load error:", error);
@@ -54,7 +53,8 @@ export const handler = async (event: any) => {
     // OPTIONAL: require provider connected before checkout
     // If you want customers to still pay before provider connects, remove this check.
     const providerStripeAccountId =
-      (booking as any)?.provider_profiles?.stripe_account_id ?? null;
+  (booking as any)?.provider?.stripe_account_id ?? null;
+
 
     if (!providerStripeAccountId) {
       return {
