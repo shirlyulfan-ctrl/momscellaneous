@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { MapPin, BadgeCheck, Clock, ArrowLeft } from "lucide-react";
+
+import { TERMS_VERSION } from "@/lib/legalVersions";
+import BackgroundCheckDisclaimerDialog from "@/components/BackgroundCheckDisclaimerDialog";
 
 type ProviderProfileRow = {
   id: string;
@@ -63,6 +66,16 @@ export default function ProviderProfile() {
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [bookingLoading, setBookingLoading] = useState(false);
 
+  // Terms acceptance / versioning (customer)
+  const [acceptedTermsVersion, setAcceptedTermsVersion] = useState<string | null>(null);
+  const [agreeTerms, setAgreeTerms] = useState(false);
+
+  // We only treat it as needing reaccept once we know the current stored version.
+  const needsTermsReaccept = acceptedTermsVersion !== null && acceptedTermsVersion !== TERMS_VERSION;
+
+  // Background check disclaimer popup
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
+
   useEffect(() => {
     const load = async () => {
       if (!id) return;
@@ -72,9 +85,7 @@ export default function ProviderProfile() {
 
       const { data, error } = await supabase
         .from("provider_profiles")
-        .select(
-          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at"
-        )
+        .select("id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at")
         .eq("id", id)
         .single();
 
@@ -92,10 +103,41 @@ export default function ProviderProfile() {
     load();
   }, [id]);
 
-  const displayName = provider?.location ? `Helper in ${provider.location}` : "Helper";
-  const displayLocation =
-    [provider?.neighborhood, provider?.location].filter(Boolean).join(", ") || "Local";
+  // Load current user's accepted terms version (if logged in)
+  useEffect(() => {
+    const loadTermsAcceptance = async () => {
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData?.user?.id;
+      if (!userId) {
+        setAcceptedTermsVersion(null);
+        setAgreeTerms(false);
+        return;
+      }
 
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("accepted_terms_version")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error("Load accepted_terms_version error:", error);
+        return;
+      }
+
+      const v = (data as any)?.accepted_terms_version ?? null;
+      setAcceptedTermsVersion(v);
+
+      // If already accepted current version, we don't need a checkbox; keep false.
+      // If mismatch, default unchecked so user must actively accept.
+      setAgreeTerms(false);
+    };
+
+    loadTermsAcceptance();
+  }, []);
+
+  const displayName = provider?.location ? `Helper in ${provider.location}` : "Helper";
+  const displayLocation = [provider?.neighborhood, provider?.location].filter(Boolean).join(", ") || "Local";
   const hourly = Number(provider?.hourly_rate ?? 0);
 
   const pricing = useMemo(() => {
@@ -128,8 +170,22 @@ export default function ProviderProfile() {
     return { start, end, hours: hrs, providerBase, fee, total, error: null as string | null };
   }, [provider, date, startTime, endTime, hourly]);
 
+  const ensureDisclaimerSeen = () => {
+    const key = "mm_disclaimer_seen";
+    const seen = localStorage.getItem(key) === "1";
+    if (!seen) {
+      setShowDisclaimer(true);
+      localStorage.setItem(key, "1");
+      return false; // IMPORTANT: caller should stop flow
+    }
+    return true;
+  };
+
   const handleBookAndPay = async () => {
     setBookingError(null);
+
+    // show disclaimer at least once AND gate flow
+    if (!ensureDisclaimerSeen()) return;
 
     if (!provider) return;
 
@@ -139,6 +195,30 @@ export default function ProviderProfile() {
     if (authErr || !userId) {
       setBookingError("Please log in to book and pay.");
       navigate("/auth");
+      return;
+    }
+
+    // Load latest acceptance version (fresh read) to prevent stale UI state
+    const { data: prof, error: profLoadErr } = await supabase
+      .from("profiles")
+      .select("accepted_terms_version")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (profLoadErr) {
+      console.error("profiles load error:", profLoadErr);
+      setBookingError("Could not verify Terms acceptance. Please try again.");
+      return;
+    }
+
+    const currentAccepted = (prof as any)?.accepted_terms_version ?? null;
+    setAcceptedTermsVersion(currentAccepted);
+
+    const mismatch = currentAccepted !== TERMS_VERSION;
+
+    // Terms gating (re-accept on version mismatch)
+    if (mismatch && !agreeTerms) {
+      setBookingError("Please agree to the Terms & Conditions to continue.");
       return;
     }
 
@@ -161,6 +241,26 @@ export default function ProviderProfile() {
       const start = pricing.start;
       const end = pricing.end;
 
+      // If user accepted (or re-accepted), write sitewide acceptance on profiles
+      if (mismatch && agreeTerms) {
+        const { error: profErr } = await supabase
+          .from("profiles")
+          .update({
+            accepted_terms_at: new Date().toISOString(),
+            accepted_terms_version: TERMS_VERSION,
+          })
+          .eq("user_id", userId);
+
+        if (profErr) {
+          console.error("profiles acceptance update error:", profErr);
+          setBookingError("Could not save Terms acceptance. Please try again.");
+          setBookingLoading(false);
+          return;
+        }
+
+        setAcceptedTermsVersion(TERMS_VERSION);
+      }
+
       // 1) If recurring, create booking_series first
       let seriesId: string | null = null;
 
@@ -175,9 +275,9 @@ export default function ProviderProfile() {
             frequency: recurring,
             interval: 1,
             byweekday,
-            start_time: startTime, // "HH:MM"
-            end_time: endTime,     // "HH:MM"
-            starts_on: date,       // "YYYY-MM-DD"
+            start_time: startTime,
+            end_time: endTime,
+            starts_on: date,
             ends_on: null,
             max_occurrences: null,
             provider_rate: hourly,
@@ -214,6 +314,10 @@ export default function ProviderProfile() {
           customer_total: pricing.total,
           platform_fee: pricing.fee,
           provider_payout: pricing.providerBase,
+
+          // transaction-level proof of acceptance
+          accepted_terms_at: new Date().toISOString(),
+          accepted_terms_version: TERMS_VERSION,
         })
         .select("id")
         .single();
@@ -260,6 +364,8 @@ export default function ProviderProfile() {
   return (
     <div className="min-h-screen bg-background">
       <Header />
+
+      <BackgroundCheckDisclaimerDialog open={showDisclaimer} onOpenChange={setShowDisclaimer} />
 
       <main className="pt-24 pb-16">
         <div className="container mx-auto px-4">
@@ -330,30 +436,6 @@ export default function ProviderProfile() {
                   <p className="text-muted-foreground leading-relaxed">
                     {provider.bio?.trim() ? provider.bio : "This helper hasn’t added a bio yet."}
                   </p>
-                </div>
-
-                <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="bg-muted rounded-2xl p-4">
-                    <div className="text-sm text-muted-foreground">Rate</div>
-                    <div className="text-xl font-bold text-foreground">
-                      ${hourly.toFixed(2)}
-                      <span className="text-sm text-muted-foreground">/hr</span>
-                    </div>
-                  </div>
-
-                  <div className="bg-muted rounded-2xl p-4">
-                    <div className="text-sm text-muted-foreground">Experience</div>
-                    <div className="text-xl font-bold text-foreground">
-                      {provider.years_experience ?? 0} yrs
-                    </div>
-                  </div>
-
-                  <div className="bg-muted rounded-2xl p-4">
-                    <div className="text-sm text-muted-foreground">Status</div>
-                    <div className="text-xl font-bold text-foreground">
-                      {provider.available ? "Available" : "Unavailable"}
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -439,12 +521,39 @@ export default function ProviderProfile() {
                     )}
                   </div>
 
+                  {/* Terms acceptance prompt (only if mismatch known) */}
+                  {needsTermsReaccept && (
+                    <label className="flex items-start gap-3 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={agreeTerms}
+                        onChange={(e) => setAgreeTerms(e.target.checked)}
+                        className="mt-1"
+                      />
+                      <span className="text-muted-foreground">
+                        I agree to the{" "}
+                        <Link to="/terms" className="underline text-foreground">
+                          Terms & Conditions
+                        </Link>{" "}
+                        (v{TERMS_VERSION}).
+                      </span>
+                    </label>
+                  )}
+
+                  <div className="text-xs text-muted-foreground">
+                    Reminder: Momscellaneous does not perform background checks.{" "}
+                    <button type="button" className="underline" onClick={() => setShowDisclaimer(true)}>
+                      Read safety notice
+                    </button>
+                    .
+                  </div>
+
                   {bookingError && <div className="text-sm text-destructive">{bookingError}</div>}
 
                   <Button
                     className="w-full"
                     onClick={handleBookAndPay}
-                    disabled={bookingLoading || !!pricing?.error}
+                    disabled={bookingLoading || !!pricing?.error || (needsTermsReaccept && !agreeTerms)}
                   >
                     {bookingLoading ? "Redirecting to payment…" : "Book & Pay"}
                   </Button>

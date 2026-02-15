@@ -2,8 +2,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight, Shield, Clock, Heart } from "lucide-react";
 
 const benefits = [
-  { icon: Shield, text: "Background checked" },
-  { icon: Clock, text: "Flexible scheduling" },
+    { icon: Clock, text: "Flexible scheduling" },
   { icon: Heart, text: "Trusted community" },
 ];
 

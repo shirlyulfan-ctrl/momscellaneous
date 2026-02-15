@@ -1,11 +1,5 @@
 import { Heart, Facebook, Twitter, Instagram, Linkedin } from "lucide-react";
 
-const footerLinks = {
-  Services: ["Child Care", "Pet Care", "Home Care", "Odd Jobs", "Errands", "Events"],
-  Company: ["About Us", "Careers", "Blog", "Press", "Partners"],
-  Support: ["Help Center", "Safety", "Trust & Safety", "Accessibility"],
-  Legal: ["Terms of Service", "Privacy Policy", "Cookie Policy"],
-};
 
 const Footer = () => {
   return (
@@ -25,7 +19,7 @@ const Footer = () => {
             </p>
             {/* Social Links */}
             <div className="flex gap-4">
-              {[Facebook, Twitter, Instagram, Linkedin].map((Icon, index) => (
+              {[Facebook, Instagram].map((Icon, index) => (
                 <a
                   key={index}
                   href="#"
@@ -60,13 +54,9 @@ const Footer = () => {
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-background/10 flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="text-background/50 text-sm">
-            © 2025 Momscellaneous. All rights reserved.
+            © 2025-2026 Momscellaneous. All rights reserved.
           </p>
-          <div className="flex items-center gap-4 text-background/50 text-sm">
-            <span>Made with</span>
-            <Heart className="w-4 h-4 text-primary fill-primary" />
-            <span>for communities everywhere</span>
-          </div>
+          
         </div>
       </div>
     </footer>
