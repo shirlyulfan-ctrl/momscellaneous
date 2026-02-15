@@ -1,66 +1,32 @@
-import { Heart, Facebook, Twitter, Instagram, Linkedin } from "lucide-react";
+// src/components/Footer.tsx
+import { Link } from "react-router-dom";
 
-
-const Footer = () => {
+export default function Footer() {
   return (
-    <footer className="bg-foreground text-background py-16">
-      <div className="container mx-auto px-4">
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-8 mb-12">
-          {/* Brand */}
-          <div className="col-span-2">
-            <a href="/" className="flex items-center gap-2 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-                <Heart className="w-5 h-5 text-primary-foreground" />
-              </div>
-              <span className="text-xl font-bold">Momscellaneous</span>
-            </a>
-            <p className="text-background/70 mb-6 max-w-xs">
-              Connecting families with trusted local helpers for all of life's everyday needs.
+    <footer className="border-t border-border bg-background">
+      <div className="container mx-auto px-4 py-10">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="text-lg font-semibold text-foreground">Momscellaneous</div>
+            <p className="text-sm text-muted-foreground max-w-md">
+              A community marketplace that connects families with independent providers.
             </p>
-            {/* Social Links */}
-            <div className="flex gap-4">
-              {[Facebook, Instagram].map((Icon, index) => (
-                <a
-                  key={index}
-                  href="#"
-                  className="w-10 h-10 rounded-full bg-background/10 flex items-center justify-center hover:bg-primary transition-colors"
-                >
-                  <Icon className="w-5 h-5" />
-                </a>
-              ))}
-            </div>
           </div>
 
-          {/* Links */}
-          {Object.entries(footerLinks).map(([title, links]) => (
-            <div key={title}>
-              <h4 className="font-bold mb-4">{title}</h4>
-              <ul className="space-y-3">
-                {links.map((link) => (
-                  <li key={link}>
-                    <a
-                      href="#"
-                      className="text-background/70 hover:text-background transition-colors text-sm"
-                    >
-                      {link}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+          <div className="flex flex-wrap gap-4 text-sm">
+            <Link to="/terms" className="text-muted-foreground hover:text-foreground">
+              Terms
+            </Link>
+            <Link to="/provider-agreement" className="text-muted-foreground hover:text-foreground">
+              Provider Agreement
+            </Link>
+          </div>
         </div>
 
-        {/* Bottom Bar */}
-        <div className="pt-8 border-t border-background/10 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p className="text-background/50 text-sm">
-            © 2025-2026 Momscellaneous. All rights reserved.
-          </p>
-          
+        <div className="mt-8 text-xs text-muted-foreground">
+          © {new Date().getFullYear()} Momscellaneous. All rights reserved.
         </div>
       </div>
     </footer>
   );
-};
-
-export default Footer;
+}
