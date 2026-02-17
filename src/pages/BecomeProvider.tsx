@@ -710,6 +710,17 @@ export default function BecomeProvider() {
             </CardContent>
           </Card>
 
+{/* Availability slots + recurring */}
+          <div className="mt-2">
+            {loadingProvider ? (
+              <div className="text-muted-foreground">Loading your provider profile…</div>
+            ) : providerError ? (
+              <div className="text-destructive">{providerError}</div>
+            ) : providerProfileId ? (
+              <AvailabilityForm providerId={providerProfileId} />
+            ) : null}
+          </div>
+
           {/* Services */}
           <Card>
             <CardHeader>
@@ -962,16 +973,7 @@ export default function BecomeProvider() {
             </Card>
           )}
 
-          {/* Availability slots + recurring */}
-          <div className="mt-2">
-            {loadingProvider ? (
-              <div className="text-muted-foreground">Loading your provider profile…</div>
-            ) : providerError ? (
-              <div className="text-destructive">{providerError}</div>
-            ) : providerProfileId ? (
-              <AvailabilityForm providerId={providerProfileId} />
-            ) : null}
-          </div>
+          
 
           {/* Save Button */}
           <Button size="lg" className="w-full" onClick={handleSaveProfile} disabled={saveDisabled}>
