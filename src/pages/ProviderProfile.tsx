@@ -71,7 +71,8 @@ export default function ProviderProfile() {
   const [agreeTerms, setAgreeTerms] = useState(false);
 
   // We only treat it as needing reaccept once we know the current stored version.
-  const needsTermsReaccept = acceptedTermsVersion !== null && acceptedTermsVersion !== TERMS_VERSION;
+  const needsTermsReaccept = acceptedTermsVersion !== TERMS_VERSION;
+
 
   // Background check disclaimer popup
   const [showDisclaimer, setShowDisclaimer] = useState(false);
@@ -127,10 +128,8 @@ export default function ProviderProfile() {
 
       const v = (data as any)?.accepted_terms_version ?? null;
       setAcceptedTermsVersion(v);
+setAgreeTerms(v === TERMS_VERSION);
 
-      // If already accepted current version, we don't need a checkbox; keep false.
-      // If mismatch, default unchecked so user must actively accept.
-      setAgreeTerms(false);
     };
 
     loadTermsAcceptance();
