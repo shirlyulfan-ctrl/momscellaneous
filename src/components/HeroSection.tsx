@@ -94,7 +94,8 @@ const HeroSection = () => {
             className="text-4xl md:text-6xl lg:text-7xl font-extrabold text-foreground mb-6 leading-tight animate-fade-in"
             style={{ animationDelay: "0.1s" }}
           >
-            Find help for life&apos;s odds &amp; ends
+            Find help for{" "}
+<span className="text-primary">life&apos;s odds &amp; ends</span>
           </h1>
 
           {/* Subheadline (UPDATED) */}
