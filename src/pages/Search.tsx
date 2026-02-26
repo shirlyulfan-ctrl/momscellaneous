@@ -1,13 +1,17 @@
+// src/pages/Search.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import ProviderCard from "@/components/ProviderCard";
 import SearchFilters from "@/components/SearchFilters";
+
 import { categories, neighborhoods } from "@/data/providers";
+import { supabase } from "@/integrations/supabase/client";
+
 import { Search, MapPin, SlidersHorizontal, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 
 type ProviderProfileRow = {
   id: string;
@@ -23,13 +27,72 @@ type ProviderProfileRow = {
   created_at: string;
 };
 
-type ProviderAvailabilityRow = {
+type ProviderAvailabilitySlot = {
   provider_id: string;
+  start_at: string;
+  end_at: string;
+  timezone?: string | null;
 };
+
+type SearchType = "one-time" | "recurring";
+
+const DAY_KEY_TO_DOW: Record<string, number> = {
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6,
+};
+
+function addMinutes(d: Date, minutes: number) {
+  const x = new Date(d);
+  x.setMinutes(x.getMinutes() + minutes);
+  return x;
+}
+
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function addDays(d: Date, days: number) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function timeToMinutes(t: string) {
+  const m = /^(\d{2}):(\d{2})$/.exec(t);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
+function toDatetimeLocalValue(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const mi = pad(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+}
 
 const SearchPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  // Incoming query params (from HeroSection and/or manual edits)
+  const queryType = (searchParams.get("type") as SearchType | null) ?? "one-time";
+  const whenParam = searchParams.get("when"); // YYYY-MM-DDTHH:MM (home page)
+  const timeParam = searchParams.get("time"); // HH:MM (home page recurring)
+  const daysParam = searchParams.get("days"); // mon,tue,wed (home page recurring)
 
   const initialQuery = searchParams.get("q") || "";
   const initialLocation = searchParams.get("location") || "";
@@ -38,13 +101,12 @@ const SearchPage = () => {
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [location, setLocation] = useState(initialLocation);
 
-  // NEW: start/end time window search
+  // Window-based availability search (existing UX on /search)
   const [startDateTime, setStartDateTime] = useState("");
   const [endDateTime, setEndDateTime] = useState("");
 
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
-  const [selectedNeighborhood, setSelectedNeighborhood] =
-    useState("All Neighborhoods");
+  const [selectedNeighborhood, setSelectedNeighborhood] = useState("All Neighborhoods");
   const [showAvailableOnly, setShowAvailableOnly] = useState(false);
   const [sortBy, setSortBy] = useState("rating");
   const [showFilters, setShowFilters] = useState(false);
@@ -52,10 +114,22 @@ const SearchPage = () => {
   const [rows, setRows] = useState<ProviderProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // NEW: availability filter results from provider_availability
+  // Availability matches
   const [availabilityProviderIds, setAvailabilityProviderIds] = useState<Set<string> | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+
+  // If one-time "when" exists, auto-fill start/end (end defaults +2h just for the UI)
+  useEffect(() => {
+    if (!whenParam) return;
+    const start = new Date(whenParam);
+    if (!Number.isFinite(start.getTime())) return;
+
+    const end = addMinutes(start, 120);
+    setStartDateTime(toDatetimeLocalValue(start));
+    setEndDateTime(toDatetimeLocalValue(end));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [whenParam]);
 
   const hasWindow = !!startDateTime && !!endDateTime;
 
@@ -66,7 +140,7 @@ const SearchPage = () => {
     return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs < startMs;
   }, [hasWindow, startDateTime, endDateTime]);
 
-  // 1) Load providers from Supabase
+  // Load providers
   useEffect(() => {
     const loadProviders = async () => {
       setLoading(true);
@@ -91,18 +165,111 @@ const SearchPage = () => {
     loadProviders();
   }, []);
 
-  // 2) If user selects a start+end window, fetch providers who have an availability slot covering the whole window
+  // Availability filtering:
+  // A) If queryType=recurring and time+days exist, match providers who have a slot containing that time
+  //    for EACH selected weekday (within next 56 days).
+  // B) Else if start+end exists, do window coverage match.
   useEffect(() => {
     const fetchAvailabilityMatches = async () => {
       setAvailabilityError(null);
 
-      // If window not set, remove the availability constraint
+      const isRecurringQuery = queryType === "recurring" && !!timeParam && !!daysParam;
+
+      // --- Recurring mode (from Home page) ---
+      if (isRecurringQuery) {
+        const requestedMinutes = timeToMinutes(timeParam!);
+        if (requestedMinutes === null) {
+          setAvailabilityProviderIds(new Set());
+          setAvailabilityError("Invalid time format for recurring search.");
+          return;
+        }
+
+        const selectedDow = daysParam!
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+          .map((k) => DAY_KEY_TO_DOW[k])
+          .filter((n) => typeof n === "number") as number[];
+
+        if (selectedDow.length === 0) {
+          setAvailabilityProviderIds(new Set());
+          setAvailabilityError("Pick at least one weekday for recurring search.");
+          return;
+        }
+
+        setAvailabilityLoading(true);
+
+        const today = startOfDay(new Date());
+        const limit = addDays(today, 56);
+
+        const { data, error } = await supabase
+          .from("provider_availability")
+          .select("provider_id,start_at,end_at,timezone")
+          .gte("start_at", today.toISOString())
+          .lte("start_at", limit.toISOString());
+
+        if (error) {
+          console.error("Failed to load provider_availability (recurring):", error);
+          setAvailabilityProviderIds(new Set());
+          setAvailabilityError("Couldn’t check recurring availability yet.");
+          setAvailabilityLoading(false);
+          return;
+        }
+
+        const slots = (data ?? []) as ProviderAvailabilitySlot[];
+
+        // For each provider, track which selected weekdays they cover at the requested time.
+        const providerToWeekdayOK = new Map<string, Set<number>>();
+
+        for (const s of slots) {
+          const utcStart = new Date(s.start_at);
+          const utcEnd = new Date(s.end_at);
+          if (!Number.isFinite(utcStart.getTime()) || !Number.isFinite(utcEnd.getTime())) continue;
+
+          const tz = s.timezone || "America/New_York";
+
+          // Convert UTC -> provider local (important for correct weekday + clock time)
+          const startLocal = new Date(utcStart.toLocaleString("en-US", { timeZone: tz }));
+          const endLocal = new Date(utcEnd.toLocaleString("en-US", { timeZone: tz }));
+
+          const dow = startLocal.getDay();
+          if (!selectedDow.includes(dow)) continue;
+
+          const stMin = startLocal.getHours() * 60 + startLocal.getMinutes();
+          const enMin = endLocal.getHours() * 60 + endLocal.getMinutes();
+
+          // Match if slot CONTAINS requested time (no fixed duration assumption)
+          let contains = stMin <= requestedMinutes && requestedMinutes < enMin;
+
+          // Support overnight slots (e.g., 23:00 -> 01:00)
+          if (enMin < stMin) {
+            contains = requestedMinutes >= stMin || requestedMinutes < enMin;
+          }
+
+          if (!contains) continue;
+
+          const set = providerToWeekdayOK.get(s.provider_id) ?? new Set<number>();
+          set.add(dow);
+          providerToWeekdayOK.set(s.provider_id, set);
+        }
+
+        const matching = new Set<string>();
+        for (const [providerId, okDays] of providerToWeekdayOK.entries()) {
+          const all = selectedDow.every((d) => okDays.has(d));
+          if (all) matching.add(providerId);
+        }
+
+        setAvailabilityProviderIds(matching);
+        setAvailabilityLoading(false);
+        return;
+      }
+
+      // --- Window mode (manual /search date-time inputs) ---
       if (!hasWindow) {
         setAvailabilityProviderIds(null);
         return;
       }
 
-      // If invalid window, don’t query; show empty results constraint
       if (isWindowInvalid) {
         setAvailabilityProviderIds(new Set());
         setAvailabilityError("End time must be after start time.");
@@ -114,6 +281,7 @@ const SearchPage = () => {
 
       setAvailabilityLoading(true);
 
+      // Slot must fully cover the requested window
       const { data, error } = await supabase
         .from("provider_availability")
         .select("provider_id")
@@ -121,13 +289,11 @@ const SearchPage = () => {
         .gte("end_at", endISO);
 
       if (error) {
-        console.error("Failed to load provider_availability:", error);
+        console.error("Failed to load provider_availability (window):", error);
         setAvailabilityProviderIds(new Set());
-        setAvailabilityError(
-          "Couldn’t check availability yet. (Did you create the provider_availability table?)"
-        );
+        setAvailabilityError("Couldn’t check availability yet.");
       } else {
-        const ids = new Set((data as ProviderAvailabilityRow[] | null)?.map((r) => r.provider_id) ?? []);
+        const ids = new Set((data as { provider_id: string }[] | null)?.map((r) => r.provider_id) ?? []);
         setAvailabilityProviderIds(ids);
       }
 
@@ -135,20 +301,21 @@ const SearchPage = () => {
     };
 
     fetchAvailabilityMatches();
-  }, [hasWindow, isWindowInvalid, startDateTime, endDateTime]);
+  }, [queryType, timeParam, daysParam, hasWindow, isWindowInvalid, startDateTime, endDateTime]);
 
-  // 3) Filter + sort (client-side, keeps your current UX)
+  // Filter + sort providers (client-side)
   const filteredProviders = useMemo(() => {
     let result = [...rows];
 
-    // NEW: availability window constraint
-    // If window is set, only show providers whose id is in availabilityProviderIds
-    if (hasWindow) {
+    const recurringActive = queryType === "recurring" && !!timeParam && !!daysParam;
+
+    // Apply availability constraint
+    if ((hasWindow || recurringActive) && availabilityProviderIds !== null) {
       const allowed = availabilityProviderIds ?? new Set<string>();
       result = result.filter((p) => allowed.has(p.id));
     }
 
-    // Filter by search query (search bio/services/location/neighborhood)
+    // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter((p) => {
@@ -165,7 +332,7 @@ const SearchPage = () => {
       });
     }
 
-    // Filter by location box (matches location or neighborhood)
+    // Location text
     if (location.trim()) {
       const loc = location.toLowerCase();
       result = result.filter((p) => {
@@ -175,12 +342,10 @@ const SearchPage = () => {
       });
     }
 
-    // Filter by category
-    // Your DB currently only has `services` (array). We’ll interpret “category”
-    // as matching either the category id or its label inside services text.
+    // Category (maps to services)
     if (selectedCategory !== "all") {
       const catLabel =
-        categories.find((c: any) => c.id === selectedCategory)?.label ?? "";
+        (categories as any[]).find((c: any) => c.id === selectedCategory)?.label ?? "";
       const target1 = selectedCategory.toLowerCase();
       const target2 = catLabel.toLowerCase();
 
@@ -193,40 +358,35 @@ const SearchPage = () => {
       });
     }
 
-    // Filter by neighborhood dropdown
+    // Neighborhood
     if (selectedNeighborhood !== "All Neighborhoods") {
-      result = result.filter(
-        (p) => (p.neighborhood ?? "") === selectedNeighborhood
-      );
+      result = result.filter((p) => (p.neighborhood ?? "") === selectedNeighborhood);
     }
 
-    // Filter by availability toggle (your existing boolean)
+    // Existing boolean availability toggle
     if (showAvailableOnly) {
       result = result.filter((p) => !!p.available);
     }
 
-    // Sort results
-    // DB doesn’t have rating/reviews yet; we’ll keep stable ordering for those.
+    // Sort
     switch (sortBy) {
-      case "rating":
-      case "reviews":
-        // keep created_at order (already ordered desc when fetched)
-        break;
       case "price-low":
-        result.sort(
-          (a, b) => Number(a.hourly_rate ?? 0) - Number(b.hourly_rate ?? 0)
-        );
+        result.sort((a, b) => Number(a.hourly_rate ?? 0) - Number(b.hourly_rate ?? 0));
         break;
       case "price-high":
-        result.sort(
-          (a, b) => Number(b.hourly_rate ?? 0) - Number(a.hourly_rate ?? 0)
-        );
+        result.sort((a, b) => Number(b.hourly_rate ?? 0) - Number(a.hourly_rate ?? 0));
+        break;
+      // rating/reviews default: keep current order
+      default:
         break;
     }
 
     return result;
   }, [
     rows,
+    queryType,
+    timeParam,
+    daysParam,
     hasWindow,
     availabilityProviderIds,
     searchQuery,
@@ -237,16 +397,14 @@ const SearchPage = () => {
     sortBy,
   ]);
 
-  // 4) Map DB rows -> ProviderCard props shape
+  // Map to ProviderCard props
   const cardModels = useMemo(() => {
     return filteredProviders.map((p) => {
-      const loc =
-        [p.neighborhood, p.location].filter(Boolean).join(", ") || "Local";
-
+      const loc = [p.neighborhood, p.location].filter(Boolean).join(", ") || "Local";
       return {
         id: p.id,
-        name: `Helper in ${p.location ?? "your area"}`, // until you add display_name
-        avatar: "/avatar-placeholder.png", // add this file to /public
+        name: `Helper in ${p.location ?? "your area"}`,
+        avatar: "/avatar-placeholder.png",
         rating: 5,
         reviews: 0,
         location: loc,
@@ -259,30 +417,28 @@ const SearchPage = () => {
     });
   }, [filteredProviders]);
 
-  const showCountLoading = loading || (hasWindow && availabilityLoading);
+  const showCountLoading = loading || availabilityLoading;
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="pt-24 pb-16">
+      <main className="pt-24 pb-20">
         <div className="container mx-auto px-4">
-          {/* Search Header */}
-          <div className="mb-8">
-            <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2">
-              Find Local Helpers
-            </h1>
-            <p className="text-muted-foreground">
+          {/* Header */}
+          <div className="text-center mb-10">
+            <h1 className="text-4xl font-bold text-foreground mb-4">Find Local Helpers</h1>
+            <p className="text-xl text-muted-foreground">
               Search for trusted providers in your neighborhood
             </p>
           </div>
 
           {/* Search Bar */}
-          <div className="bg-card rounded-2xl p-4 shadow-card mb-6">
-            <div className="flex flex-col md:flex-row gap-3">
+          <div className="bg-card rounded-2xl p-6 shadow-card mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {/* What do you need */}
-              <div className="flex-1 flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
-                <Search className="w-5 h-5 text-muted-foreground shrink-0" />
+              <div className="flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
+                <Search className="w-5 h-5 text-muted-foreground" />
                 <input
                   type="text"
                   placeholder="What do you need help with?"
@@ -293,157 +449,117 @@ const SearchPage = () => {
               </div>
 
               {/* Location */}
-              <div className="flex-1 flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
-                <MapPin className="w-5 h-5 text-muted-foreground shrink-0" />
+              <div className="flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
+                <MapPin className="w-5 h-5 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="Your neighborhood"
+                  placeholder="Location"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground"
                 />
               </div>
 
-              {/* Start time */}
-<div className="flex-1 bg-muted rounded-xl px-4 py-2">
-  <div className="text-xs text-muted-foreground mb-1">Start time</div>
-  <div className="flex items-center gap-3">
-    <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
-    <input
-      type="datetime-local"
-      value={startDateTime}
-      onChange={(e) => setStartDateTime(e.target.value)}
-      className="w-full bg-transparent border-none outline-none text-foreground"
-    />
-  </div>
-</div>
+              {/* Start */}
+              <div className="flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
+                <Clock className="w-5 h-5 text-muted-foreground" />
+                <div className="flex-1">
+                  <p className="text-xs text-muted-foreground">Start time</p>
+                  <input
+                    type="datetime-local"
+                    value={startDateTime}
+                    onChange={(e) => setStartDateTime(e.target.value)}
+                    className="w-full bg-transparent border-none outline-none text-foreground"
+                  />
+                </div>
+              </div>
 
-{/* End time */}
-<div className="flex-1 bg-muted rounded-xl px-4 py-2">
-  <div className="text-xs text-muted-foreground mb-1">End time</div>
-  <div className="flex items-center gap-3">
-    <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
-    <input
-      type="datetime-local"
-      value={endDateTime}
-      onChange={(e) => setEndDateTime(e.target.value)}
-      className="w-full bg-transparent border-none outline-none text-foreground"
-    />
-  </div>
-</div>
-
-
-              <Button
-                variant="outline"
-                className="md:hidden"
-                onClick={() => setShowFilters(!showFilters)}
-              >
-                <SlidersHorizontal className="w-5 h-5 mr-2" />
-                Filters
-              </Button>
+              {/* End */}
+              <div className="flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
+                <Clock className="w-5 h-5 text-muted-foreground" />
+                <div className="flex-1">
+                  <p className="text-xs text-muted-foreground">End time</p>
+                  <input
+                    type="datetime-local"
+                    value={endDateTime}
+                    onChange={(e) => setEndDateTime(e.target.value)}
+                    className="w-full bg-transparent border-none outline-none text-foreground"
+                  />
+                </div>
+              </div>
             </div>
 
-            {/* Availability status/errors */}
-            {hasWindow && (availabilityLoading || availabilityError) && (
-              <div className="mt-3 text-sm">
-                {availabilityLoading ? (
-                  <span className="text-muted-foreground">Checking availability…</span>
-                ) : availabilityError ? (
-                  <span className="text-destructive">{availabilityError}</span>
-                ) : null}
-              </div>
-            )}
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4 mt-6">
+              <Button variant="outline" onClick={() => setShowFilters(!showFilters)}>
+                <SlidersHorizontal className="w-4 h-4 mr-2" />
+                Filters
+              </Button>
+
+              {(availabilityLoading || availabilityError) && (
+                <div className="text-sm text-muted-foreground">
+                  {availabilityLoading ? "Checking availability…" : availabilityError}
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="flex flex-col lg:flex-row gap-6">
-            {/* Filters Sidebar */}
-            <aside
-              className={`lg:w-72 shrink-0 ${
-                showFilters ? "block" : "hidden lg:block"
-              }`}
-            >
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            {/* Filters */}
+            <div className={`lg:block ${showFilters ? "block" : "hidden"}`}>
               <SearchFilters
-                categories={categories}
-                neighborhoods={neighborhoods}
+                categories={categories as any}
+                neighborhoods={neighborhoods as any}
                 selectedCategory={selectedCategory}
-                setSelectedCategory={setSelectedCategory}
                 selectedNeighborhood={selectedNeighborhood}
-                setSelectedNeighborhood={setSelectedNeighborhood}
                 showAvailableOnly={showAvailableOnly}
-                setShowAvailableOnly={setShowAvailableOnly}
                 sortBy={sortBy}
-                setSortBy={setSortBy}
+                onCategoryChange={setSelectedCategory}
+                onNeighborhoodChange={setSelectedNeighborhood}
+                onAvailableChange={setShowAvailableOnly}
+                onSortChange={setSortBy}
               />
-            </aside>
+            </div>
 
             {/* Results */}
-            <div className="flex-1">
-              {/* Results Header */}
+            <div className="lg:col-span-3">
               <div className="flex items-center justify-between mb-6">
-                <p className="text-muted-foreground">
-                  <span className="font-semibold text-foreground">
-                    {showCountLoading ? "…" : cardModels.length}
-                  </span>{" "}
-                  helpers found
+                <h2 className="text-2xl font-bold text-foreground">
+                  {showCountLoading ? "…" : cardModels.length} helpers found
                   {selectedCategory !== "all" && (
-                    <span>
+                    <span className="text-muted-foreground font-normal">
                       {" "}
-                      in{" "}
-                      {
-                        categories.find((c: any) => c.id === selectedCategory)
-                          ?.label
-                      }
+                      in {(categories as any[]).find((c: any) => c.id === selectedCategory)?.label}
                     </span>
                   )}
-                </p>
+                </h2>
               </div>
 
-              {/* Results Grid */}
               {loading ? (
-                <div className="text-muted-foreground">Loading helpers…</div>
-              ) : hasWindow && availabilityLoading ? (
-                <div className="text-muted-foreground">Checking availability…</div>
+                <div className="text-center py-20">
+                  <p className="text-muted-foreground text-lg">Loading helpers…</p>
+                </div>
+              ) : availabilityLoading ? (
+                <div className="text-center py-20">
+                  <p className="text-muted-foreground text-lg">Checking availability…</p>
+                </div>
               ) : cardModels.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {cardModels.map((provider, index) => (
                     <div
-                      key={provider.id}
-                      className="animate-fade-in cursor-pointer"
-                      style={{ animationDelay: `${index * 0.05}s` }}
+                      key={`${provider.id}-${index}`}
                       onClick={() => navigate(`/providers/${provider.id}`)}
+                      className="cursor-pointer"
                     >
-                      <ProviderCard
-                        name={provider.name}
-                        avatar={provider.avatar}
-                        rating={provider.rating}
-                        reviews={provider.reviews}
-                        location={provider.location}
-                        hourlyRate={provider.hourlyRate}
-                        services={provider.services}
-                        verified={provider.verified}
-                        available={provider.available}
-                      />
+                      <ProviderCard {...provider} />
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-16 bg-card rounded-2xl border border-border">
-                  <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Search className="w-8 h-8 text-muted-foreground" />
-                  </div>
-                  <h3 className="text-xl font-semibold text-foreground mb-2">
-                    No helpers found
-                  </h3>
-                  <p className="text-muted-foreground max-w-md mx-auto">
-                    Try adjusting your search or filters to find more providers
-                    in your area.
+                <div className="text-center py-20">
+                  <h3 className="text-2xl font-semibold text-foreground mb-4">No helpers found</h3>
+                  <p className="text-muted-foreground text-lg mb-6">
+                    Try adjusting your search or filters to find more providers in your area.
                   </p>
-                  {hasWindow && (
-                    <p className="text-muted-foreground max-w-md mx-auto mt-2 text-sm">
-                      Tip: add availability slots for providers in the{" "}
-                      <code>provider_availability</code> table to match your selected time window.
-                    </p>
-                  )}
                 </div>
               )}
             </div>
