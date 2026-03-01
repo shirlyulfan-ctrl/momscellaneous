@@ -103,7 +103,7 @@ const HeroSection = () => {
             className="text-lg md:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto animate-fade-in"
             style={{ animationDelay: "0.2s" }}
           >
-            Connect with providers that fill the gaps in your schedule
+            Connect with providers that fill the <span className="text-primary">gaps</span> in your schedule
           </p>
 
           {/* Search Box */}
