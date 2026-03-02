@@ -36,6 +36,7 @@ import {
   Baby,
   DollarSign,
   MapPin,
+  Navigation,
 } from "lucide-react";
 
 import { categories } from "@/data/providers";
@@ -98,7 +99,16 @@ type ProviderProfileRow = {
   accepted_terms_version: string | null;
   accepted_provider_agreement_at: string | null;
   accepted_provider_agreement_version: string | null;
+
+  // NEW: travel radius + home coords
+  travel_radius_miles?: number | null;
+  home_lat?: number | null;
+  home_lng?: number | null;
 };
+
+type GeocodeResponse =
+  | { found: false }
+  | { found: true; lat: number; lng: number; place_name?: string };
 
 export default function BecomeProvider() {
   const { user, loading: authLoading } = useAuth();
@@ -135,6 +145,14 @@ export default function BecomeProvider() {
   const [canBringChild, setCanBringChild] = useState(false);
   const [termsAndConditions, setTermsAndConditions] = useState("");
   const [available, setAvailable] = useState(true);
+
+  // NEW: provider home base + travel radius
+  const [homeBase, setHomeBase] = useState(""); // text input to geocode
+  const [homeResolvedName, setHomeResolvedName] = useState<string>("");
+  const [homeLat, setHomeLat] = useState<number | null>(null);
+  const [homeLng, setHomeLng] = useState<number | null>(null);
+  const [travelRadiusMiles, setTravelRadiusMiles] = useState<number>(10);
+  const [geocoding, setGeocoding] = useState(false);
 
   // NEW: agreement states + disclaimer popup
   const [agreeTerms, setAgreeTerms] = useState(false);
@@ -187,11 +205,15 @@ export default function BecomeProvider() {
             "terms_and_conditions",
             "available",
             "stripe_account_id",
-            // NEW
+            // legal acceptance
             "accepted_terms_at",
             "accepted_terms_version",
             "accepted_provider_agreement_at",
             "accepted_provider_agreement_version",
+            // travel fields
+            "travel_radius_miles",
+            "home_lat",
+            "home_lng",
           ].join(",")
         )
         .eq("user_id", user.id)
@@ -217,6 +239,19 @@ export default function BecomeProvider() {
         setTermsAndConditions(row.terms_and_conditions || "");
         setAvailable(row.available ?? true);
 
+        // travel fields
+        setTravelRadiusMiles(Number(row.travel_radius_miles ?? 10));
+        setHomeLat(row.home_lat ?? null);
+        setHomeLng(row.home_lng ?? null);
+
+        // If we already have coords but no text, show a simple placeholder
+        if (row.home_lat != null && row.home_lng != null) {
+          setHomeResolvedName("Home location saved");
+        } else {
+          setHomeResolvedName("");
+        }
+        setHomeBase(""); // keep blank unless user wants to change it
+
         // Agreement checkbox defaults:
         // If already accepted current versions, pre-check them.
         const acceptedTermsCurrent = (row.accepted_terms_version ?? null) === TERMS_VERSION;
@@ -237,6 +272,13 @@ export default function BecomeProvider() {
         setExistingProfile(null);
         setAgreeTerms(false);
         setAgreeProviderAgreement(false);
+
+        // defaults for travel fields
+        setTravelRadiusMiles(10);
+        setHomeLat(null);
+        setHomeLng(null);
+        setHomeBase("");
+        setHomeResolvedName("");
       }
     } catch (err) {
       console.error("Error loading profile:", err);
@@ -307,6 +349,10 @@ export default function BecomeProvider() {
             verified: false,
             available: true,
             years_experience: 0,
+            // defaults for travel
+            travel_radius_miles: 10,
+            home_lat: null,
+            home_lng: null,
           })
           .select("id")
           .single();
@@ -438,6 +484,64 @@ export default function BecomeProvider() {
     }
   };
 
+  // NEW: Geocode provider home base -> set lat/lng
+  const handleGeocodeHomeBase = async () => {
+    const q = homeBase.trim();
+    if (!q) {
+      toast({
+        title: t.common.error,
+        description: "Enter a town or address first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setGeocoding(true);
+    try {
+      const resp = await fetch(`/.netlify/functions/geocode?q=${encodeURIComponent(q)}`);
+      const json = (await resp.json()) as GeocodeResponse;
+
+      if (!resp.ok) {
+        throw new Error((json as any)?.error || "Geocode failed");
+      }
+
+      if (!("found" in json) || json.found === false) {
+        toast({
+          title: t.common.error,
+          description: "We couldn’t find that location. Try a more specific town + state.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setHomeLat(json.lat);
+      setHomeLng(json.lng);
+      setHomeResolvedName(json.place_name || "Location saved");
+
+      toast({
+        title: t.common.success,
+        description: "Home location set. Don’t forget to save your profile.",
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        title: t.common.error,
+        description: "Could not set that location right now.",
+        variant: "destructive",
+      });
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
+  const handleClearHomeBase = () => {
+    setHomeLat(null);
+    setHomeLng(null);
+    setHomeResolvedName("");
+    setHomeBase("");
+    toast({ title: t.common.success, description: "Home location cleared. Save your profile to apply." });
+  };
+
   // Stripe Connect (provider payouts)
   const connectStripe = async () => {
     if (!existingProfile?.id) {
@@ -495,6 +599,16 @@ export default function BecomeProvider() {
       }
     }
 
+    // For “proper” distance search, we should require at least home coords if radius > 0
+    if (travelRadiusMiles > 0 && (homeLat == null || homeLng == null)) {
+      toast({
+        title: t.common.error,
+        description: "Please set your home base location (town/address) so customers can find you by distance.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -515,7 +629,12 @@ export default function BecomeProvider() {
         terms_and_conditions: termsAndConditions,
         available,
 
-        // NEW: record acceptance (always overwrite when saving, so you always have latest timestamp)
+        // travel fields
+        travel_radius_miles: travelRadiusMiles,
+        home_lat: homeLat,
+        home_lng: homeLng,
+
+        // record acceptance (overwrite when saving)
         accepted_terms_at: nowIso,
         accepted_terms_version: TERMS_VERSION,
         accepted_provider_agreement_at: nowIso,
@@ -554,6 +673,9 @@ export default function BecomeProvider() {
               "accepted_terms_version",
               "accepted_provider_agreement_at",
               "accepted_provider_agreement_version",
+              "travel_radius_miles",
+              "home_lat",
+              "home_lng",
             ].join(",")
           )
           .single();
@@ -645,6 +767,71 @@ export default function BecomeProvider() {
                 </div>
               </div>
 
+              {/* NEW: Home base + travel radius */}
+              <div className="border border-border rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Navigation className="h-4 w-4 text-muted-foreground" />
+                  <p className="font-medium text-foreground">Travel distance</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="homeBase">Home base (town or address)</Label>
+                  <div className="flex flex-col md:flex-row gap-2">
+                    <Input
+                      id="homeBase"
+                      placeholder="e.g., Levittown, NY"
+                      value={homeBase}
+                      onChange={(e) => setHomeBase(e.target.value)}
+                      maxLength={200}
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={handleGeocodeHomeBase}
+                      disabled={geocoding}
+                      className="shrink-0"
+                    >
+                      {geocoding ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      Set location
+                    </Button>
+                    <Button type="button" variant="outline" onClick={handleClearHomeBase} className="shrink-0">
+                      Clear
+                    </Button>
+                  </div>
+                  {homeResolvedName ? (
+                    <p className="text-sm text-muted-foreground">Saved: {homeResolvedName}</p>
+                  ) : homeLat != null && homeLng != null ? (
+                    <p className="text-sm text-muted-foreground">Saved coordinates: {homeLat.toFixed(5)}, {homeLng.toFixed(5)}</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Set this so customers in nearby towns can find you based on distance.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="travelRadius">How far are you willing to travel? (miles)</Label>
+                  <select
+                    id="travelRadius"
+                    value={travelRadiusMiles}
+                    onChange={(e) => setTravelRadiusMiles(Number(e.target.value))}
+                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground"
+                  >
+                    <option value={0}>Only my town (0)</option>
+                    <option value={5}>Up to 5</option>
+                    <option value={10}>Up to 10</option>
+                    <option value={15}>Up to 15</option>
+                    <option value={25}>Up to 25</option>
+                    <option value={50}>Up to 50</option>
+                    <option value={75}>Up to 75</option>
+                    <option value={100}>Up to 100</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    If you set a travel distance above 0, you must set your home base location.
+                  </p>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="bio">{t.provider.bio}</Label>
                 <Textarea
@@ -710,7 +897,7 @@ export default function BecomeProvider() {
             </CardContent>
           </Card>
 
-{/* Availability slots + recurring */}
+          {/* Availability slots + recurring */}
           <div className="mt-2">
             {loadingProvider ? (
               <div className="text-muted-foreground">Loading your provider profile…</div>
@@ -884,7 +1071,7 @@ export default function BecomeProvider() {
             </CardContent>
           </Card>
 
-          {/* NEW: Agreements + Disclaimer */}
+          {/* Agreements + Disclaimer */}
           <Card>
             <CardHeader>
               <CardTitle>Agreements</CardTitle>
@@ -972,8 +1159,6 @@ export default function BecomeProvider() {
               </CardContent>
             </Card>
           )}
-
-          
 
           {/* Save Button */}
           <Button size="lg" className="w-full" onClick={handleSaveProfile} disabled={saveDisabled}>

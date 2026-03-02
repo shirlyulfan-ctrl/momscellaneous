@@ -217,12 +217,7 @@ const HeroSection = () => {
             style={{ animationDelay: "0.4s" }}
           >
             {[
-              "Babysitter",
-              "Dog Walker",
-              "House Cleaning",
-              "Pet Sitting",
               "Grocery Shopping",
-              "Tutoring",
               "School drop off",
               "School Pickup",
               "Handovers",

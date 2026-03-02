@@ -1,5 +1,5 @@
 // src/pages/Search.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import Header from "@/components/Header";
@@ -84,6 +84,10 @@ function toDatetimeLocalValue(d: Date) {
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
+type GeocodeResponse =
+  | { found: false }
+  | { found: true; lat: number; lng: number; place_name?: string };
+
 const SearchPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -118,6 +122,14 @@ const SearchPage = () => {
   const [availabilityProviderIds, setAvailabilityProviderIds] = useState<Set<string> | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+
+  // NEW: Distance/radius matches (from RPC)
+  const [radiusProviderIds, setRadiusProviderIds] = useState<Set<string> | null>(null);
+  const [radiusLoading, setRadiusLoading] = useState(false);
+  const [radiusError, setRadiusError] = useState<string | null>(null);
+
+  // Avoid race conditions on geocode while user types
+  const geocodeReqId = useRef(0);
 
   // If one-time "when" exists, auto-fill start/end (end defaults +2h just for the UI)
   useEffect(() => {
@@ -164,6 +176,75 @@ const SearchPage = () => {
 
     loadProviders();
   }, []);
+
+  // NEW: location -> geocode -> RPC providers_who_can_reach
+  useEffect(() => {
+    const run = async () => {
+      setRadiusError(null);
+
+      const q = location.trim();
+      if (!q) {
+        setRadiusProviderIds(null); // no radius filtering if no location entered
+        return;
+      }
+
+      const myId = ++geocodeReqId.current;
+      setRadiusLoading(true);
+
+      try {
+        const resp = await fetch(`/.netlify/functions/geocode?q=${encodeURIComponent(q)}`);
+        const json = (await resp.json()) as GeocodeResponse;
+
+        // if a newer request started, ignore this one
+        if (myId !== geocodeReqId.current) return;
+
+        if (!resp.ok) {
+          setRadiusProviderIds(new Set());
+          setRadiusError("Couldn’t geocode that location.");
+          setRadiusLoading(false);
+          return;
+        }
+
+        if (!("found" in json) || json.found === false) {
+          setRadiusProviderIds(new Set());
+          setRadiusError("Location not found.");
+          setRadiusLoading(false);
+          return;
+        }
+
+        const { lat, lng } = json;
+
+        const { data, error } = await supabase.rpc("providers_who_can_reach", {
+          q_lat: lat,
+          q_lng: lng,
+        });
+
+        if (myId !== geocodeReqId.current) return;
+
+        if (error) {
+          console.error("RPC providers_who_can_reach error:", error);
+          setRadiusProviderIds(new Set());
+          setRadiusError("Couldn’t apply travel radius yet.");
+          setRadiusLoading(false);
+          return;
+        }
+
+        const ids = new Set<string>((data ?? []).map((r: any) => r.provider_id));
+        setRadiusProviderIds(ids);
+        setRadiusLoading(false);
+      } catch (e) {
+        console.error(e);
+        if (myId !== geocodeReqId.current) return;
+        setRadiusProviderIds(new Set());
+        setRadiusError("Couldn’t apply travel radius yet.");
+        setRadiusLoading(false);
+      }
+    };
+
+    // small debounce so it doesn't geocode on every keystroke instantly
+    const t = setTimeout(run, 350);
+    return () => clearTimeout(t);
+  }, [location]);
 
   // Availability filtering:
   // A) If queryType=recurring and time+days exist, match providers who have a slot containing that time
@@ -309,7 +390,13 @@ const SearchPage = () => {
 
     const recurringActive = queryType === "recurring" && !!timeParam && !!daysParam;
 
-    // Apply availability constraint
+    // 1) Apply radius constraint IF location is set (radiusProviderIds will be null until resolved)
+    if (location.trim() && radiusProviderIds !== null) {
+      const allowed = radiusProviderIds ?? new Set<string>();
+      result = result.filter((p) => allowed.has(p.id));
+    }
+
+    // 2) Apply availability constraint
     if ((hasWindow || recurringActive) && availabilityProviderIds !== null) {
       const allowed = availabilityProviderIds ?? new Set<string>();
       result = result.filter((p) => allowed.has(p.id));
@@ -332,14 +419,9 @@ const SearchPage = () => {
       });
     }
 
-    // Location text
-    if (location.trim()) {
-      const loc = location.toLowerCase();
-      result = result.filter((p) => {
-        const l = (p.location ?? "").toLowerCase();
-        const n = (p.neighborhood ?? "").toLowerCase();
-        return l.includes(loc) || n.includes(loc);
-      });
+    // Neighborhood
+    if (selectedNeighborhood !== "All Neighborhoods") {
+      result = result.filter((p) => (p.neighborhood ?? "") === selectedNeighborhood);
     }
 
     // Category (maps to services)
@@ -356,11 +438,6 @@ const SearchPage = () => {
           (target2 ? services.some((s) => s.includes(target2)) : false)
         );
       });
-    }
-
-    // Neighborhood
-    if (selectedNeighborhood !== "All Neighborhoods") {
-      result = result.filter((p) => (p.neighborhood ?? "") === selectedNeighborhood);
     }
 
     // Existing boolean availability toggle
@@ -391,6 +468,7 @@ const SearchPage = () => {
     availabilityProviderIds,
     searchQuery,
     location,
+    radiusProviderIds,
     selectedCategory,
     selectedNeighborhood,
     showAvailableOnly,
@@ -417,7 +495,7 @@ const SearchPage = () => {
     });
   }, [filteredProviders]);
 
-  const showCountLoading = loading || availabilityLoading;
+  const showCountLoading = loading || availabilityLoading || radiusLoading;
 
   return (
     <div className="min-h-screen bg-background">
@@ -495,11 +573,15 @@ const SearchPage = () => {
                 Filters
               </Button>
 
-              {(availabilityLoading || availabilityError) && (
-                <div className="text-sm text-muted-foreground">
-                  {availabilityLoading ? "Checking availability…" : availabilityError}
-                </div>
-              )}
+              <div className="text-sm text-muted-foreground">
+                {radiusLoading ? "Checking travel distance…" : radiusError ? radiusError : null}
+                {(availabilityLoading || availabilityError) && (
+                  <>
+                    {radiusLoading || radiusError ? " • " : null}
+                    {availabilityLoading ? "Checking availability…" : availabilityError}
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
@@ -538,9 +620,9 @@ const SearchPage = () => {
                 <div className="text-center py-20">
                   <p className="text-muted-foreground text-lg">Loading helpers…</p>
                 </div>
-              ) : availabilityLoading ? (
+              ) : showCountLoading ? (
                 <div className="text-center py-20">
-                  <p className="text-muted-foreground text-lg">Checking availability…</p>
+                  <p className="text-muted-foreground text-lg">Filtering helpers…</p>
                 </div>
               ) : cardModels.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
