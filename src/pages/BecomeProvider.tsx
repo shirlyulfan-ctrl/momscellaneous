@@ -94,13 +94,13 @@ type ProviderProfileRow = {
 
   stripe_account_id: string | null;
 
-  // NEW: legal acceptance columns
+  // Legal acceptance
   accepted_terms_at: string | null;
   accepted_terms_version: string | null;
   accepted_provider_agreement_at: string | null;
   accepted_provider_agreement_version: string | null;
 
-  // NEW: travel radius + home coords
+  // Travel fields
   travel_radius_miles?: number | null;
   home_lat?: number | null;
   home_lng?: number | null;
@@ -146,18 +146,24 @@ export default function BecomeProvider() {
   const [termsAndConditions, setTermsAndConditions] = useState("");
   const [available, setAvailable] = useState(true);
 
-  // NEW: provider home base + travel radius
-  const [homeBase, setHomeBase] = useState(""); // text input to geocode
+  // Agreements + disclaimer
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [agreeProviderAgreement, setAgreeProviderAgreement] = useState(false);
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
+
+  // NEW: Connect status
+  const [connectStatusLoading, setConnectStatusLoading] = useState(false);
+  const [chargesEnabled, setChargesEnabled] = useState(false);
+  const [payoutsEnabled, setPayoutsEnabled] = useState(false);
+  const [connectStatusError, setConnectStatusError] = useState<string | null>(null);
+
+  // NEW: home base + travel radius
+  const [homeBase, setHomeBase] = useState("");
   const [homeResolvedName, setHomeResolvedName] = useState<string>("");
   const [homeLat, setHomeLat] = useState<number | null>(null);
   const [homeLng, setHomeLng] = useState<number | null>(null);
   const [travelRadiusMiles, setTravelRadiusMiles] = useState<number>(10);
   const [geocoding, setGeocoding] = useState(false);
-
-  // NEW: agreement states + disclaimer popup
-  const [agreeTerms, setAgreeTerms] = useState(false);
-  const [agreeProviderAgreement, setAgreeProviderAgreement] = useState(false);
-  const [showDisclaimer, setShowDisclaimer] = useState(false);
 
   // Version mismatch = must re-accept
   const needsTermsReaccept = useMemo(() => {
@@ -165,7 +171,10 @@ export default function BecomeProvider() {
   }, [existingProfile]);
 
   const needsProviderAgreementReaccept = useMemo(() => {
-    return (existingProfile?.accepted_provider_agreement_version ?? null) !== PROVIDER_AGREEMENT_VERSION;
+    return (
+      (existingProfile?.accepted_provider_agreement_version ?? null) !==
+      PROVIDER_AGREEMENT_VERSION
+    );
   }, [existingProfile]);
 
   const mustAcceptAgreements = needsTermsReaccept || needsProviderAgreementReaccept || !existingProfile;
@@ -210,7 +219,7 @@ export default function BecomeProvider() {
             "accepted_terms_version",
             "accepted_provider_agreement_at",
             "accepted_provider_agreement_version",
-            // travel fields
+            // travel
             "travel_radius_miles",
             "home_lat",
             "home_lng",
@@ -239,21 +248,16 @@ export default function BecomeProvider() {
         setTermsAndConditions(row.terms_and_conditions || "");
         setAvailable(row.available ?? true);
 
-        // travel fields
+        // travel
         setTravelRadiusMiles(Number(row.travel_radius_miles ?? 10));
         setHomeLat(row.home_lat ?? null);
         setHomeLng(row.home_lng ?? null);
+        setHomeBase("");
+        setHomeResolvedName(
+          row.home_lat != null && row.home_lng != null ? "Home location saved" : ""
+        );
 
-        // If we already have coords but no text, show a simple placeholder
-        if (row.home_lat != null && row.home_lng != null) {
-          setHomeResolvedName("Home location saved");
-        } else {
-          setHomeResolvedName("");
-        }
-        setHomeBase(""); // keep blank unless user wants to change it
-
-        // Agreement checkbox defaults:
-        // If already accepted current versions, pre-check them.
+        // Agreements checkbox defaults:
         const acceptedTermsCurrent = (row.accepted_terms_version ?? null) === TERMS_VERSION;
         const acceptedProvCurrent =
           (row.accepted_provider_agreement_version ?? null) === PROVIDER_AGREEMENT_VERSION;
@@ -273,12 +277,25 @@ export default function BecomeProvider() {
         setAgreeTerms(false);
         setAgreeProviderAgreement(false);
 
-        // defaults for travel fields
+        setBio("");
+        setLocation("");
+        setNeighborhood("");
+        setHourlyRate("");
+        setTaskRate("");
+        setSelectedServices([]);
+        setSelectedCategories([]);
+        setYearsExperience("");
+        setChildFriendly(false);
+        setCanBringChild(false);
+        setTermsAndConditions("");
+        setAvailable(true);
+
         setTravelRadiusMiles(10);
         setHomeLat(null);
         setHomeLng(null);
         setHomeBase("");
         setHomeResolvedName("");
+        setMediaFiles([]);
       }
     } catch (err) {
       console.error("Error loading profile:", err);
@@ -325,7 +342,6 @@ export default function BecomeProvider() {
         }
 
         const existing = found?.[0];
-
         if (existing?.id) {
           if (!cancelled) {
             setProviderProfileId(existing.id);
@@ -349,7 +365,6 @@ export default function BecomeProvider() {
             verified: false,
             available: true,
             years_experience: 0,
-            // defaults for travel
             travel_radius_miles: 10,
             home_lat: null,
             home_lng: null,
@@ -382,11 +397,48 @@ export default function BecomeProvider() {
     };
 
     ensureProviderProfile();
-
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // NEW: fetch connect status after profile loads / changes
+  useEffect(() => {
+    const run = async () => {
+      try {
+        setConnectStatusError(null);
+
+        if (!existingProfile?.id || !existingProfile?.stripe_account_id) {
+          setChargesEnabled(false);
+          setPayoutsEnabled(false);
+          return;
+        }
+
+        setConnectStatusLoading(true);
+
+        const res = await fetch(
+          `/.netlify/functions/get-connect-status?provider_profile_id=${encodeURIComponent(
+            existingProfile.id
+          )}`
+        );
+        const json = await res.json();
+
+        if (!res.ok) throw new Error(json?.error || "Failed to load Stripe status");
+
+        setChargesEnabled(!!json?.charges_enabled);
+        setPayoutsEnabled(!!json?.payouts_enabled);
+      } catch (e: any) {
+        console.error(e);
+        setConnectStatusError(e?.message || "Could not check Stripe status");
+        setChargesEnabled(false);
+        setPayoutsEnabled(false);
+      } finally {
+        setConnectStatusLoading(false);
+      }
+    };
+
+    run();
+  }, [existingProfile?.id, existingProfile?.stripe_account_id]);
 
   const handleServiceToggle = (service: string) => {
     setSelectedServices((prev) =>
@@ -475,7 +527,11 @@ export default function BecomeProvider() {
     try {
       if (!existingProfile?.id) return;
 
-      await supabase.from("provider_media").update({ is_primary: false }).eq("provider_id", existingProfile.id);
+      await supabase
+        .from("provider_media")
+        .update({ is_primary: false })
+        .eq("provider_id", existingProfile.id);
+
       await supabase.from("provider_media").update({ is_primary: true }).eq("id", mediaId);
 
       setMediaFiles((prev) => prev.map((m) => ({ ...m, is_primary: m.id === mediaId })));
@@ -599,7 +655,7 @@ export default function BecomeProvider() {
       }
     }
 
-    // For “proper” distance search, we should require at least home coords if radius > 0
+    // If travel radius > 0, require home coords (so distance search works)
     if (travelRadiusMiles > 0 && (homeLat == null || homeLng == null)) {
       toast({
         title: t.common.error,
@@ -629,7 +685,6 @@ export default function BecomeProvider() {
         terms_and_conditions: termsAndConditions,
         available,
 
-        // travel fields
         travel_radius_miles: travelRadiusMiles,
         home_lat: homeLat,
         home_lng: homeLng,
@@ -718,8 +773,8 @@ export default function BecomeProvider() {
     );
   }
 
-  // Disable save if agreements required but not checked
   const saveDisabled = isSaving || (mustAcceptAgreements && (!agreeTerms || !agreeProviderAgreement));
+  const stripeReady = !!existingProfile?.stripe_account_id && chargesEnabled && payoutsEnabled;
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -767,7 +822,7 @@ export default function BecomeProvider() {
                 </div>
               </div>
 
-              {/* NEW: Home base + travel radius */}
+              {/* Travel distance */}
               <div className="border border-border rounded-xl p-4 space-y-3">
                 <div className="flex items-center gap-2">
                   <Navigation className="h-4 w-4 text-muted-foreground" />
@@ -779,7 +834,7 @@ export default function BecomeProvider() {
                   <div className="flex flex-col md:flex-row gap-2">
                     <Input
                       id="homeBase"
-                      placeholder="e.g., Levittown, NY"
+                      placeholder="e.g., Great Neck, NY"
                       value={homeBase}
                       onChange={(e) => setHomeBase(e.target.value)}
                       maxLength={200}
@@ -801,7 +856,9 @@ export default function BecomeProvider() {
                   {homeResolvedName ? (
                     <p className="text-sm text-muted-foreground">Saved: {homeResolvedName}</p>
                   ) : homeLat != null && homeLng != null ? (
-                    <p className="text-sm text-muted-foreground">Saved coordinates: {homeLat.toFixed(5)}, {homeLng.toFixed(5)}</p>
+                    <p className="text-sm text-muted-foreground">
+                      Saved coordinates: {homeLat.toFixed(5)}, {homeLng.toFixed(5)}
+                    </p>
                   ) : (
                     <p className="text-sm text-muted-foreground">
                       Set this so customers in nearby towns can find you based on distance.
@@ -897,7 +954,7 @@ export default function BecomeProvider() {
             </CardContent>
           </Card>
 
-          {/* Availability slots + recurring */}
+          {/* Availability moved directly under rates */}
           <div className="mt-2">
             {loadingProvider ? (
               <div className="text-muted-foreground">Loading your provider profile…</div>
@@ -976,7 +1033,7 @@ export default function BecomeProvider() {
             </CardContent>
           </Card>
 
-          {/* Provider “custom text” Terms box (your existing field) */}
+          {/* Provider custom terms */}
           <Card>
             <CardHeader>
               <CardTitle>{t.provider.termsAndConditions}</CardTitle>
@@ -1076,9 +1133,7 @@ export default function BecomeProvider() {
             <CardHeader>
               <CardTitle>Agreements</CardTitle>
               <CardDescription>
-                {mustAcceptAgreements
-                  ? "Please review and accept to continue."
-                  : "You’re up to date on the latest agreements."}
+                {mustAcceptAgreements ? "Please review and accept to continue." : "You’re up to date on the latest agreements."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -1132,14 +1187,12 @@ export default function BecomeProvider() {
             </CardContent>
           </Card>
 
-          {/* Stripe Connect Section (payouts) */}
+          {/* Stripe Connect Section */}
           {existingProfile && !existingProfile.stripe_account_id && (
             <Card>
               <CardHeader>
                 <CardTitle>Enable Payouts</CardTitle>
-                <CardDescription>
-                  To receive money from bookings, connect your Stripe account.
-                </CardDescription>
+                <CardDescription>To receive money from bookings, connect your Stripe account.</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
                 <Button onClick={connectStripe}>Connect Stripe for Payouts</Button>
@@ -1152,10 +1205,34 @@ export default function BecomeProvider() {
 
           {existingProfile?.stripe_account_id && (
             <Card>
-              <CardContent className="pt-6">
-                <span className="text-secondary font-medium">
-                  Stripe Connected ✅ — You can receive payouts.
-                </span>
+              <CardHeader>
+                <CardTitle>Stripe status</CardTitle>
+                <CardDescription>We’ll only show you as payable when Stripe finishes onboarding.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {connectStatusLoading ? (
+                  <div className="text-muted-foreground">Checking Stripe status…</div>
+                ) : stripeReady ? (
+                  <div className="text-secondary font-medium">Stripe Connected ✅ — You can receive payouts.</div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="text-foreground font-medium">Stripe onboarding not finished yet</div>
+                    <div className="text-sm text-muted-foreground">
+                      Status:{" "}
+                      <span className={chargesEnabled ? "text-secondary" : "text-destructive"}>
+                        charges {chargesEnabled ? "enabled" : "not enabled"}
+                      </span>
+                      {" · "}
+                      <span className={payoutsEnabled ? "text-secondary" : "text-destructive"}>
+                        payouts {payoutsEnabled ? "enabled" : "not enabled"}
+                      </span>
+                    </div>
+                    <Button variant="secondary" onClick={connectStripe}>
+                      Continue Stripe onboarding
+                    </Button>
+                    {connectStatusError && <div className="text-sm text-destructive">{connectStatusError}</div>}
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

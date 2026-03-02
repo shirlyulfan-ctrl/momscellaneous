@@ -14,10 +14,15 @@ type Body = { provider_profile_id: string };
 
 export const handler = async (event: any) => {
   try {
-    if (event.httpMethod !== "POST") return { statusCode: 405, body: "Method Not Allowed" };
+    if (event.httpMethod !== "POST") {
+      return { statusCode: 405, body: "Method Not Allowed" };
+    }
 
     const { provider_profile_id } = JSON.parse(event.body || "{}") as Body;
-    if (!provider_profile_id) return { statusCode: 400, body: "Missing provider_profile_id" };
+
+    if (!provider_profile_id) {
+      return { statusCode: 400, body: "Missing provider_profile_id" };
+    }
 
     // Load provider profile
     const { data: provider, error } = await supabase
@@ -26,22 +31,35 @@ export const handler = async (event: any) => {
       .eq("id", provider_profile_id)
       .single();
 
-    if (error || !provider) return { statusCode: 404, body: "Provider not found" };
+    if (error || !provider) {
+      return { statusCode: 404, body: "Provider not found" };
+    }
 
-    let accountId = provider.stripe_account_id;
+    let accountId: string | null = provider.stripe_account_id ?? null;
 
     // Create Stripe Connect account if missing
     if (!accountId) {
       const acct = await stripe.accounts.create({
-        type: "standard",
+        type: "express",
+        country: "US",
+        business_type: "individual",
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true },
+        },
       });
 
       accountId = acct.id;
 
-      await supabase
+      const { error: upErr } = await supabase
         .from("provider_profiles")
         .update({ stripe_account_id: accountId })
         .eq("id", provider_profile_id);
+
+      if (upErr) {
+        console.error("Failed to store stripe_account_id:", upErr);
+        return { statusCode: 500, body: "Failed to store Stripe account id" };
+      }
     }
 
     // Create onboarding link
@@ -57,8 +75,8 @@ export const handler = async (event: any) => {
       body: JSON.stringify({ url: link.url }),
       headers: { "Content-Type": "application/json" },
     };
-  } catch (e) {
-    console.error(e);
-    return { statusCode: 500, body: "Internal Server Error" };
+  } catch (e: any) {
+    console.error("create-connect-account error:", e?.message || e);
+    return { statusCode: 500, body: e?.message || "Internal Server Error" };
   }
 };
