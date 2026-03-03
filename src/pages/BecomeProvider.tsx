@@ -26,6 +26,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 
 import { useToast } from "@/hooks/use-toast";
+
 import {
   Loader2,
   Upload,
@@ -35,7 +36,6 @@ import {
   Video,
   Baby,
   DollarSign,
-  MapPin,
   Navigation,
 } from "lucide-react";
 
@@ -76,8 +76,8 @@ type ProviderProfileRow = {
   user_id: string;
 
   bio: string | null;
-  location: string | null;
-  neighborhood: string | null;
+  location: string | null; // kept for compatibility
+  neighborhood: string | null; // kept for compatibility
 
   hourly_rate: number | null;
   task_rate: number | null;
@@ -94,16 +94,18 @@ type ProviderProfileRow = {
 
   stripe_account_id: string | null;
 
-  // Legal acceptance
   accepted_terms_at: string | null;
   accepted_terms_version: string | null;
   accepted_provider_agreement_at: string | null;
   accepted_provider_agreement_version: string | null;
 
-  // Travel fields
+  // travel fields
   travel_radius_miles?: number | null;
   home_lat?: number | null;
   home_lng?: number | null;
+
+  // Optional if you later add it to DB:
+  // home_base?: string | null;
 };
 
 type GeocodeResponse =
@@ -125,7 +127,7 @@ export default function BecomeProvider() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // profile row (from provider_profiles)
+  // profile row
   const [existingProfile, setExistingProfile] = useState<ProviderProfileRow | null>(null);
 
   // media
@@ -134,8 +136,6 @@ export default function BecomeProvider() {
 
   // form state
   const [bio, setBio] = useState("");
-  const [location, setLocation] = useState("");
-  const [neighborhood, setNeighborhood] = useState("");
   const [hourlyRate, setHourlyRate] = useState("");
   const [taskRate, setTaskRate] = useState("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
@@ -151,30 +151,26 @@ export default function BecomeProvider() {
   const [agreeProviderAgreement, setAgreeProviderAgreement] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
 
-  // NEW: Connect status
+  // Stripe connect status
   const [connectStatusLoading, setConnectStatusLoading] = useState(false);
   const [chargesEnabled, setChargesEnabled] = useState(false);
   const [payoutsEnabled, setPayoutsEnabled] = useState(false);
   const [connectStatusError, setConnectStatusError] = useState<string | null>(null);
 
-  // NEW: home base + travel radius
+  // Home base + travel radius
   const [homeBase, setHomeBase] = useState("");
-  const [homeResolvedName, setHomeResolvedName] = useState<string>("");
+  const [homeResolvedName, setHomeResolvedName] = useState("");
   const [homeLat, setHomeLat] = useState<number | null>(null);
   const [homeLng, setHomeLng] = useState<number | null>(null);
   const [travelRadiusMiles, setTravelRadiusMiles] = useState<number>(10);
   const [geocoding, setGeocoding] = useState(false);
 
-  // Version mismatch = must re-accept
   const needsTermsReaccept = useMemo(() => {
     return (existingProfile?.accepted_terms_version ?? null) !== TERMS_VERSION;
   }, [existingProfile]);
 
   const needsProviderAgreementReaccept = useMemo(() => {
-    return (
-      (existingProfile?.accepted_provider_agreement_version ?? null) !==
-      PROVIDER_AGREEMENT_VERSION
-    );
+    return (existingProfile?.accepted_provider_agreement_version ?? null) !== PROVIDER_AGREEMENT_VERSION;
   }, [existingProfile]);
 
   const mustAcceptAgreements = needsTermsReaccept || needsProviderAgreementReaccept || !existingProfile;
@@ -184,7 +180,7 @@ export default function BecomeProvider() {
     if (!authLoading && !user) navigate("/auth");
   }, [user, authLoading, navigate]);
 
-  // Load existing profile to edit
+  // Load existing profile
   useEffect(() => {
     if (user) loadExistingProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -192,8 +188,8 @@ export default function BecomeProvider() {
 
   const loadExistingProfile = async () => {
     if (!user) return;
-
     setIsLoading(true);
+
     try {
       const { data, error } = await supabase
         .from("provider_profiles")
@@ -214,12 +210,10 @@ export default function BecomeProvider() {
             "terms_and_conditions",
             "available",
             "stripe_account_id",
-            // legal acceptance
             "accepted_terms_at",
             "accepted_terms_version",
             "accepted_provider_agreement_at",
             "accepted_provider_agreement_version",
-            // travel
             "travel_radius_miles",
             "home_lat",
             "home_lng",
@@ -236,8 +230,6 @@ export default function BecomeProvider() {
         setExistingProfile(row);
 
         setBio(row.bio || "");
-        setLocation(row.location || "");
-        setNeighborhood(row.neighborhood || "");
         setHourlyRate(row.hourly_rate != null ? String(row.hourly_rate) : "");
         setTaskRate(row.task_rate != null ? String(row.task_rate) : "");
         setSelectedServices(row.services || []);
@@ -252,20 +244,18 @@ export default function BecomeProvider() {
         setTravelRadiusMiles(Number(row.travel_radius_miles ?? 10));
         setHomeLat(row.home_lat ?? null);
         setHomeLng(row.home_lng ?? null);
-        setHomeBase("");
-        setHomeResolvedName(
-          row.home_lat != null && row.home_lng != null ? "Home location saved" : ""
-        );
 
-        // Agreements checkbox defaults:
+        // If you’re not storing home_base in DB, we’ll prefill homeBase from location
+        setHomeBase((row.location ?? "").toString());
+        setHomeResolvedName(row.home_lat != null && row.home_lng != null ? "Home location saved" : "");
+
+        // agreements checkbox defaults
         const acceptedTermsCurrent = (row.accepted_terms_version ?? null) === TERMS_VERSION;
-        const acceptedProvCurrent =
-          (row.accepted_provider_agreement_version ?? null) === PROVIDER_AGREEMENT_VERSION;
-
+        const acceptedProvCurrent = (row.accepted_provider_agreement_version ?? null) === PROVIDER_AGREEMENT_VERSION;
         setAgreeTerms(acceptedTermsCurrent);
         setAgreeProviderAgreement(acceptedProvCurrent);
 
-        // Load media
+        // media
         const { data: media } = await supabase
           .from("provider_media")
           .select("*")
@@ -278,8 +268,6 @@ export default function BecomeProvider() {
         setAgreeProviderAgreement(false);
 
         setBio("");
-        setLocation("");
-        setNeighborhood("");
         setHourlyRate("");
         setTaskRate("");
         setSelectedServices([]);
@@ -295,6 +283,7 @@ export default function BecomeProvider() {
         setHomeLng(null);
         setHomeBase("");
         setHomeResolvedName("");
+
         setMediaFiles([]);
       }
     } catch (err) {
@@ -342,6 +331,7 @@ export default function BecomeProvider() {
         }
 
         const existing = found?.[0];
+
         if (existing?.id) {
           if (!cancelled) {
             setProviderProfileId(existing.id);
@@ -350,7 +340,6 @@ export default function BecomeProvider() {
           return;
         }
 
-        // Create minimal profile if none exists
         const { data: created, error: createErr } = await supabase
           .from("provider_profiles")
           .insert({
@@ -397,12 +386,13 @@ export default function BecomeProvider() {
     };
 
     ensureProviderProfile();
+
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // NEW: fetch connect status after profile loads / changes
+  // Stripe connect status
   useEffect(() => {
     const run = async () => {
       try {
@@ -415,14 +405,10 @@ export default function BecomeProvider() {
         }
 
         setConnectStatusLoading(true);
-
         const res = await fetch(
-          `/.netlify/functions/get-connect-status?provider_profile_id=${encodeURIComponent(
-            existingProfile.id
-          )}`
+          `/.netlify/functions/get-connect-status?provider_profile_id=${encodeURIComponent(existingProfile.id)}`
         );
         const json = await res.json();
-
         if (!res.ok) throw new Error(json?.error || "Failed to load Stripe status");
 
         setChargesEnabled(!!json?.charges_enabled);
@@ -441,16 +427,12 @@ export default function BecomeProvider() {
   }, [existingProfile?.id, existingProfile?.stripe_account_id]);
 
   const handleServiceToggle = (service: string) => {
-    setSelectedServices((prev) =>
-      prev.includes(service) ? prev.filter((s) => s !== service) : [...prev, service]
-    );
+    setSelectedServices((prev) => (prev.includes(service) ? prev.filter((s) => s !== service) : [...prev, service]));
   };
 
   const handleCategoryToggle = (categoryId: string) => {
     if (categoryId === "all") return;
-    setSelectedCategories((prev) =>
-      prev.includes(categoryId) ? prev.filter((c) => c !== categoryId) : [...prev, categoryId]
-    );
+    setSelectedCategories((prev) => (prev.includes(categoryId) ? prev.filter((c) => c !== categoryId) : [...prev, categoryId]));
   };
 
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -464,15 +446,10 @@ export default function BecomeProvider() {
         const fileExt = file.name.split(".").pop();
         const fileName = `${user.id}/${Date.now()}.${fileExt}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from("provider-media")
-          .upload(fileName, file);
-
+        const { error: uploadError } = await supabase.storage.from("provider-media").upload(fileName, file);
         if (uploadError) throw uploadError;
 
-        const publicUrl = supabase.storage
-          .from("provider-media")
-          .getPublicUrl(fileName).data.publicUrl;
+        const publicUrl = supabase.storage.from("provider-media").getPublicUrl(fileName).data.publicUrl;
 
         const { data: mediaRecord, error: insertError } = await supabase
           .from("provider_media")
@@ -486,21 +463,13 @@ export default function BecomeProvider() {
           .single();
 
         if (insertError) throw insertError;
-
         setMediaFiles((prev) => [...prev, mediaRecord]);
       }
 
-      toast({
-        title: t.common.success,
-        description: "Media uploaded successfully!",
-      });
+      toast({ title: t.common.success, description: "Media uploaded successfully!" });
     } catch (error) {
       console.error("Error uploading media:", error);
-      toast({
-        title: t.common.error,
-        description: "Failed to upload media",
-        variant: "destructive",
-      });
+      toast({ title: t.common.error, description: "Failed to upload media", variant: "destructive" });
     } finally {
       setUploadingMedia(false);
     }
@@ -515,11 +484,7 @@ export default function BecomeProvider() {
       toast({ title: t.common.success, description: "Media deleted successfully!" });
     } catch (error) {
       console.error("Error deleting media:", error);
-      toast({
-        title: t.common.error,
-        description: "Failed to delete media",
-        variant: "destructive",
-      });
+      toast({ title: t.common.error, description: "Failed to delete media", variant: "destructive" });
     }
   };
 
@@ -527,11 +492,7 @@ export default function BecomeProvider() {
     try {
       if (!existingProfile?.id) return;
 
-      await supabase
-        .from("provider_media")
-        .update({ is_primary: false })
-        .eq("provider_id", existingProfile.id);
-
+      await supabase.from("provider_media").update({ is_primary: false }).eq("provider_id", existingProfile.id);
       await supabase.from("provider_media").update({ is_primary: true }).eq("id", mediaId);
 
       setMediaFiles((prev) => prev.map((m) => ({ ...m, is_primary: m.id === mediaId })));
@@ -540,65 +501,31 @@ export default function BecomeProvider() {
     }
   };
 
-  // NEW: Geocode provider home base -> set lat/lng
-  const handleGeocodeHomeBase = async () => {
-    const q = homeBase.trim();
-    if (!q) {
-      toast({
-        title: t.common.error,
-        description: "Enter a town or address first.",
-        variant: "destructive",
-      });
-      return;
-    }
+  // Geocode home base (called automatically on Save when needed)
+  const geocodeHomeBase = async (qRaw: string) => {
+    const q = qRaw.trim();
+    if (!q) return { ok: false as const, error: "Enter a town or address first." };
 
     setGeocoding(true);
     try {
       const resp = await fetch(`/.netlify/functions/geocode?q=${encodeURIComponent(q)}`);
       const json = (await resp.json()) as GeocodeResponse;
 
-      if (!resp.ok) {
-        throw new Error((json as any)?.error || "Geocode failed");
-      }
-
+      if (!resp.ok) return { ok: false as const, error: (json as any)?.error || "Geocode failed" };
       if (!("found" in json) || json.found === false) {
-        toast({
-          title: t.common.error,
-          description: "We couldn’t find that location. Try a more specific town + state.",
-          variant: "destructive",
-        });
-        return;
+        return { ok: false as const, error: "We couldn’t find that location. Try a more specific town + state." };
       }
 
-      setHomeLat(json.lat);
-      setHomeLng(json.lng);
-      setHomeResolvedName(json.place_name || "Location saved");
-
-      toast({
-        title: t.common.success,
-        description: "Home location set. Don’t forget to save your profile.",
-      });
+      return { ok: true as const, lat: json.lat, lng: json.lng, place_name: json.place_name || "" };
     } catch (e) {
       console.error(e);
-      toast({
-        title: t.common.error,
-        description: "Could not set that location right now.",
-        variant: "destructive",
-      });
+      return { ok: false as const, error: "Could not set that location right now." };
     } finally {
       setGeocoding(false);
     }
   };
 
-  const handleClearHomeBase = () => {
-    setHomeLat(null);
-    setHomeLng(null);
-    setHomeResolvedName("");
-    setHomeBase("");
-    toast({ title: t.common.success, description: "Home location cleared. Save your profile to apply." });
-  };
-
-  // Stripe Connect (provider payouts)
+  // Stripe connect (provider payouts)
   const connectStripe = async () => {
     if (!existingProfile?.id) {
       toast({
@@ -624,42 +551,33 @@ export default function BecomeProvider() {
       window.location.href = json.url;
     } catch (err) {
       console.error("Stripe connect error:", err);
-      toast({
-        title: "Stripe error",
-        description: "Could not start Stripe onboarding.",
-        variant: "destructive",
-      });
+      toast({ title: "Stripe error", description: "Could not start Stripe onboarding.", variant: "destructive" });
     }
   };
 
   const handleSaveProfile = async () => {
     if (!user) return;
 
-    // Enforce agreement acceptance (especially when version changed)
+    // Agreements required
     if (mustAcceptAgreements) {
       if (!agreeTerms) {
-        toast({
-          title: t.common.error,
-          description: "Please accept the Terms & Conditions to continue.",
-          variant: "destructive",
-        });
+        toast({ title: t.common.error, description: "Please accept the Terms & Conditions to continue.", variant: "destructive" });
         return;
       }
       if (!agreeProviderAgreement) {
-        toast({
-          title: t.common.error,
-          description: "Please accept the Provider Agreement to continue.",
-          variant: "destructive",
-        });
+        toast({ title: t.common.error, description: "Please accept the Provider Agreement to continue.", variant: "destructive" });
         return;
       }
     }
 
-    // If travel radius > 0, require home coords (so distance search works)
-    if (travelRadiusMiles > 0 && (homeLat == null || homeLng == null)) {
+    // If travel radius > 0, we REQUIRE a home base and we will geocode it automatically
+    const needsDistanceSearch = Number(travelRadiusMiles ?? 0) > 0;
+    const homeBaseTrim = homeBase.trim();
+
+    if (needsDistanceSearch && !homeBaseTrim) {
       toast({
         title: t.common.error,
-        description: "Please set your home base location (town/address) so customers can find you by distance.",
+        description: "Please enter your home base (town/address) so customers can find you by distance.",
         variant: "destructive",
       });
       return;
@@ -670,11 +588,39 @@ export default function BecomeProvider() {
     try {
       const nowIso = new Date().toISOString();
 
+      let nextLat = homeLat;
+      let nextLng = homeLng;
+      let resolvedName = homeResolvedName;
+
+      // If we need distance and we don't have coordinates yet, geocode now
+      if (needsDistanceSearch && (nextLat == null || nextLng == null)) {
+        const g = await geocodeHomeBase(homeBaseTrim);
+        if (!g.ok) {
+          toast({ title: t.common.error, description: g.error, variant: "destructive" });
+          return;
+        }
+        nextLat = g.lat;
+        nextLng = g.lng;
+        resolvedName = g.place_name || "Location saved";
+
+        setHomeLat(nextLat);
+        setHomeLng(nextLng);
+        setHomeResolvedName(resolvedName);
+      }
+
+      // Backward compatibility:
+      // - We remove Location/Neighborhood fields from UI
+      // - But we still store location = homeBase so older UI/filters don’t break
+      const locationCompat = homeBaseTrim;
+      const neighborhoodCompat = ""; // optional: derive neighborhood later
+
       const profileData: any = {
         user_id: user.id,
+
         bio,
-        location,
-        neighborhood,
+        location: locationCompat,
+        neighborhood: neighborhoodCompat,
+
         hourly_rate: hourlyRate ? parseFloat(hourlyRate) : null,
         task_rate: taskRate ? parseFloat(taskRate) : null,
         services: selectedServices,
@@ -685,23 +631,19 @@ export default function BecomeProvider() {
         terms_and_conditions: termsAndConditions,
         available,
 
-        travel_radius_miles: travelRadiusMiles,
-        home_lat: homeLat,
-        home_lng: homeLng,
-
-        // record acceptance (overwrite when saving)
         accepted_terms_at: nowIso,
         accepted_terms_version: TERMS_VERSION,
         accepted_provider_agreement_at: nowIso,
         accepted_provider_agreement_version: PROVIDER_AGREEMENT_VERSION,
+
+        // travel fields
+        travel_radius_miles: Number.isFinite(Number(travelRadiusMiles)) ? Number(travelRadiusMiles) : 0,
+        home_lat: nextLat,
+        home_lng: nextLng,
       };
 
       if (existingProfile?.id) {
-        const { error } = await supabase
-          .from("provider_profiles")
-          .update(profileData)
-          .eq("id", existingProfile.id);
-
+        const { error } = await supabase.from("provider_profiles").update(profileData).eq("id", existingProfile.id);
         if (error) throw error;
       } else {
         const { data, error } = await supabase
@@ -742,20 +684,12 @@ export default function BecomeProvider() {
       // Mark user as provider
       await supabase.from("profiles").update({ is_provider: true }).eq("user_id", user.id);
 
-      // Refresh profile row (to pick up stripe_account_id after connect return, etc.)
       await loadExistingProfile();
 
-      toast({
-        title: t.common.success,
-        description: t.provider.profileSaved,
-      });
+      toast({ title: t.common.success, description: t.provider.profileSaved });
     } catch (error) {
       console.error("Error saving profile:", error);
-      toast({
-        title: t.common.error,
-        description: t.provider.profileError,
-        variant: "destructive",
-      });
+      toast({ title: t.common.error, description: t.provider.profileError, variant: "destructive" });
     } finally {
       setIsSaving(false);
     }
@@ -773,8 +707,7 @@ export default function BecomeProvider() {
     );
   }
 
-  const saveDisabled = isSaving || (mustAcceptAgreements && (!agreeTerms || !agreeProviderAgreement));
-  const stripeReady = !!existingProfile?.stripe_account_id && chargesEnabled && payoutsEnabled;
+  const saveDisabled = isSaving || geocoding || (mustAcceptAgreements && (!agreeTerms || !agreeProviderAgreement));
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -790,105 +723,71 @@ export default function BecomeProvider() {
             </h1>
           </div>
 
-          {/* Basic Info */}
+          {/* Home base + travel distance (replaces separate Location/Neighborhood UI) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <MapPin className="h-5 w-5" />
-                {t.provider.location}
+                <Navigation className="h-5 w-5" />
+                Travel distance
               </CardTitle>
+              <CardDescription>
+                Set a home base and how far you’re willing to travel so you show up in nearby town searches.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="location">{t.provider.location}</Label>
-                  <Input
-                    id="location"
-                    placeholder={t.provider.locationPlaceholder}
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    maxLength={100}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="neighborhood">{t.provider.neighborhood}</Label>
-                  <Input
-                    id="neighborhood"
-                    placeholder={t.provider.neighborhoodPlaceholder}
-                    value={neighborhood}
-                    onChange={(e) => setNeighborhood(e.target.value)}
-                    maxLength={100}
-                  />
-                </div>
-              </div>
+              <div className="space-y-2">
+                <Label htmlFor="homeBase">Home base (town or address)</Label>
+                <Input
+                  id="homeBase"
+                  placeholder="e.g., Great Neck, NY"
+                  value={homeBase}
+                  onChange={(e) => setHomeBase(e.target.value)}
+                  maxLength={200}
+                />
+                <p className="text-xs text-muted-foreground">
+                  We’ll convert this into coordinates automatically when you save.
+                </p>
 
-              {/* Travel distance */}
-              <div className="border border-border rounded-xl p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Navigation className="h-4 w-4 text-muted-foreground" />
-                  <p className="font-medium text-foreground">Travel distance</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="homeBase">Home base (town or address)</Label>
-                  <div className="flex flex-col md:flex-row gap-2">
-                    <Input
-                      id="homeBase"
-                      placeholder="e.g., Great Neck, NY"
-                      value={homeBase}
-                      onChange={(e) => setHomeBase(e.target.value)}
-                      maxLength={200}
-                    />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={handleGeocodeHomeBase}
-                      disabled={geocoding}
-                      className="shrink-0"
-                    >
-                      {geocoding ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                      Set location
-                    </Button>
-                    <Button type="button" variant="outline" onClick={handleClearHomeBase} className="shrink-0">
-                      Clear
-                    </Button>
-                  </div>
-                  {homeResolvedName ? (
-                    <p className="text-sm text-muted-foreground">Saved: {homeResolvedName}</p>
-                  ) : homeLat != null && homeLng != null ? (
-                    <p className="text-sm text-muted-foreground">
-                      Saved coordinates: {homeLat.toFixed(5)}, {homeLng.toFixed(5)}
-                    </p>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      Set this so customers in nearby towns can find you based on distance.
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="travelRadius">How far are you willing to travel? (miles)</Label>
-                  <select
-                    id="travelRadius"
-                    value={travelRadiusMiles}
-                    onChange={(e) => setTravelRadiusMiles(Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground"
-                  >
-                    <option value={0}>Only my town (0)</option>
-                    <option value={5}>Up to 5</option>
-                    <option value={10}>Up to 10</option>
-                    <option value={15}>Up to 15</option>
-                    <option value={25}>Up to 25</option>
-                    <option value={50}>Up to 50</option>
-                    <option value={75}>Up to 75</option>
-                    <option value={100}>Up to 100</option>
-                  </select>
-                  <p className="text-xs text-muted-foreground">
-                    If you set a travel distance above 0, you must set your home base location.
+                {homeResolvedName ? (
+                  <p className="text-sm text-muted-foreground">Saved: {homeResolvedName}</p>
+                ) : homeLat != null && homeLng != null ? (
+                  <p className="text-sm text-muted-foreground">
+                    Saved coordinates: {homeLat.toFixed(5)}, {homeLng.toFixed(5)}
                   </p>
-                </div>
+                ) : null}
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="travelRadius">Max travel distance (miles)</Label>
+                <select
+                  id="travelRadius"
+                  value={travelRadiusMiles}
+                  onChange={(e) => setTravelRadiusMiles(Number(e.target.value))}
+                  className="w-full border border-border rounded-md bg-background px-3 py-2 text-foreground"
+                >
+                  <option value={0}>Only my town (0 miles)</option>
+                  <option value={5}>Up to 5</option>
+                  <option value={10}>Up to 10</option>
+                  <option value={15}>Up to 15</option>
+                  <option value={25}>Up to 25</option>
+                  <option value={50}>Up to 50</option>
+                  <option value={75}>Up to 75</option>
+                  <option value={100}>Up to 100</option>
+                </select>
+
+                <p className="text-xs text-muted-foreground">
+                  If you set a travel distance above 0, you must set a home base so customers can search by distance.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Basic info */}
+          <Card>
+            <CardHeader>
+              <CardTitle>{t.provider.bio}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="bio">{t.provider.bio}</Label>
                 <Textarea
@@ -954,7 +853,7 @@ export default function BecomeProvider() {
             </CardContent>
           </Card>
 
-          {/* Availability moved directly under rates */}
+          {/* Availability slots */}
           <div className="mt-2">
             {loadingProvider ? (
               <div className="text-muted-foreground">Loading your provider profile…</div>
@@ -1074,9 +973,7 @@ export default function BecomeProvider() {
                       )}
 
                       {media.is_primary && (
-                        <Badge className="absolute top-2 left-2 text-xs">
-                          {t.provider.primaryPhoto}
-                        </Badge>
+                        <Badge className="absolute top-2 left-2 text-xs">{t.provider.primaryPhoto}</Badge>
                       )}
 
                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
@@ -1128,7 +1025,7 @@ export default function BecomeProvider() {
             </CardContent>
           </Card>
 
-          {/* Agreements + Disclaimer */}
+          {/* Agreements */}
           <Card>
             <CardHeader>
               <CardTitle>Agreements</CardTitle>
@@ -1138,9 +1035,7 @@ export default function BecomeProvider() {
             </CardHeader>
             <CardContent className="space-y-3">
               {(needsTermsReaccept || !existingProfile) && (
-                <p className="text-sm text-muted-foreground">
-                  We may require re-acceptance if the agreement version changes.
-                </p>
+                <p className="text-sm text-muted-foreground">We may require re-acceptance if the agreement version changes.</p>
               )}
 
               <label className="flex items-start gap-3 text-sm">
@@ -1187,7 +1082,7 @@ export default function BecomeProvider() {
             </CardContent>
           </Card>
 
-          {/* Stripe Connect Section */}
+          {/* Stripe Connect */}
           {existingProfile && !existingProfile.stripe_account_id && (
             <Card>
               <CardHeader>
@@ -1205,41 +1100,24 @@ export default function BecomeProvider() {
 
           {existingProfile?.stripe_account_id && (
             <Card>
-              <CardHeader>
-                <CardTitle>Stripe status</CardTitle>
-                <CardDescription>We’ll only show you as payable when Stripe finishes onboarding.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {connectStatusLoading ? (
-                  <div className="text-muted-foreground">Checking Stripe status…</div>
-                ) : stripeReady ? (
-                  <div className="text-secondary font-medium">Stripe Connected ✅ — You can receive payouts.</div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="text-foreground font-medium">Stripe onboarding not finished yet</div>
-                    <div className="text-sm text-muted-foreground">
-                      Status:{" "}
-                      <span className={chargesEnabled ? "text-secondary" : "text-destructive"}>
-                        charges {chargesEnabled ? "enabled" : "not enabled"}
-                      </span>
-                      {" · "}
-                      <span className={payoutsEnabled ? "text-secondary" : "text-destructive"}>
-                        payouts {payoutsEnabled ? "enabled" : "not enabled"}
-                      </span>
-                    </div>
-                    <Button variant="secondary" onClick={connectStripe}>
-                      Continue Stripe onboarding
-                    </Button>
-                    {connectStatusError && <div className="text-sm text-destructive">{connectStatusError}</div>}
-                  </div>
-                )}
+              <CardContent className="pt-6 space-y-2">
+                <div className="text-secondary font-medium">Stripe Connected ✅</div>
+                <div className="text-xs text-muted-foreground">
+                  {connectStatusLoading
+                    ? "Checking Stripe status…"
+                    : connectStatusError
+                    ? connectStatusError
+                    : `charges_enabled: ${chargesEnabled ? "true" : "false"} • payouts_enabled: ${
+                        payoutsEnabled ? "true" : "false"
+                      }`}
+                </div>
               </CardContent>
             </Card>
           )}
 
-          {/* Save Button */}
+          {/* Save */}
           <Button size="lg" className="w-full" onClick={handleSaveProfile} disabled={saveDisabled}>
-            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {(isSaving || geocoding) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {saveDisabled && mustAcceptAgreements ? "Accept agreements to save" : t.provider.saveProfile}
           </Button>
         </div>
