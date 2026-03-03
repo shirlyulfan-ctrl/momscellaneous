@@ -1,13 +1,22 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { User, Session } from "@supabase/supabase-js";
+import { supabase } from "@/integrations/supabase/client";
+
+type AuthSignUpResult = {
+  data: any | null; // Supabase AuthResponse (keep as any if you're not importing the type)
+  error: Error | null;
+};
+
+type AuthSignInResult = {
+  error: Error | null;
+};
 
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  signUp: (email: string, password: string, fullName?: string) => Promise<{ error: Error | null }>;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName?: string) => Promise<AuthSignUpResult>;
+  signIn: (email: string, password: string) => Promise<AuthSignInResult>;
   signOut: () => Promise<void>;
 }
 
@@ -19,16 +28,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        setLoading(false);
-      }
-    );
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
 
-    // THEN check for existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -38,30 +45,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signUp = async (email: string, password: string, fullName?: string) => {
-    const redirectUrl = `${window.location.origin}/`;
-    
-    const { error } = await supabase.auth.signUp({
+  const signUp = async (email: string, password: string, fullName?: string): Promise<AuthSignUpResult> => {
+    // Send the user back to /auth after clicking the email confirmation link
+    // (You can change to / if you prefer, but /auth tends to be cleaner.)
+    const redirectUrl = `${window.location.origin}/auth`;
+
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         emailRedirectTo: redirectUrl,
         data: {
-          full_name: fullName,
+          full_name: fullName || "",
         },
       },
     });
-    
-    return { error: error as Error | null };
+
+    return { data, error: (error as Error | null) ?? null };
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string): Promise<AuthSignInResult> => {
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-    
-    return { error: error as Error | null };
+
+    return { error: (error as Error | null) ?? null };
   };
 
   const signOut = async () => {
@@ -78,7 +87,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
 };
