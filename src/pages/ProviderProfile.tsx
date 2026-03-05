@@ -21,6 +21,10 @@ type ProviderProfileRow = {
   available: boolean | null;
   years_experience: number | null;
   created_at: string;
+
+  // ✅ added for example stamp
+  is_example?: boolean | null;
+  example_label?: string | null;
 };
 
 const FEE_RATE = 0.075;
@@ -73,7 +77,6 @@ export default function ProviderProfile() {
   // We only treat it as needing reaccept once we know the current stored version.
   const needsTermsReaccept = acceptedTermsVersion !== TERMS_VERSION;
 
-
   // Background check disclaimer popup
   const [showDisclaimer, setShowDisclaimer] = useState(false);
 
@@ -86,7 +89,9 @@ export default function ProviderProfile() {
 
       const { data, error } = await supabase
         .from("provider_profiles")
-        .select("id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at")
+        .select(
+          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at,is_example,example_label"
+        )
         .eq("id", id)
         .single();
 
@@ -128,8 +133,7 @@ export default function ProviderProfile() {
 
       const v = (data as any)?.accepted_terms_version ?? null;
       setAcceptedTermsVersion(v);
-setAgreeTerms(v === TERMS_VERSION);
-
+      setAgreeTerms(v === TERMS_VERSION);
     };
 
     loadTermsAcceptance();
@@ -187,6 +191,12 @@ setAgreeTerms(v === TERMS_VERSION);
     if (!ensureDisclaimerSeen()) return;
 
     if (!provider) return;
+
+    // ✅ Optional: prevent booking example listings (recommended for trust)
+    if (provider.is_example) {
+      setBookingError("This is an example listing. Create your own listing like this to start offering help.");
+      return;
+    }
 
     const { data: authData, error: authErr } = await supabase.auth.getUser();
     const userId = authData?.user?.id;
@@ -360,6 +370,10 @@ setAgreeTerms(v === TERMS_VERSION);
     }
   };
 
+  const exampleText =
+    provider?.example_label?.trim() ||
+    "Example listing — create one like this!";
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -387,7 +401,30 @@ setAgreeTerms(v === TERMS_VERSION);
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 bg-card rounded-2xl p-6 border border-border shadow-card">
+              {/* ✅ Make this container relative so the stamp can overlay cleanly */}
+              <div className="lg:col-span-2 bg-card rounded-2xl p-6 border border-border shadow-card relative overflow-hidden">
+                {/* ✅ Example stamp */}
+                {provider.is_example && (
+                  <div
+                    className="absolute top-4 right-4 z-10 rotate-12 rounded-xl border-2 px-3 py-2 font-extrabold uppercase tracking-widest shadow-lg pointer-events-none"
+                    style={{
+                      borderColor: "rgba(220, 38, 38, 0.85)",
+                      color: "rgba(220, 38, 38, 0.9)",
+                      backgroundColor: "rgba(255,255,255,0.78)",
+                      backdropFilter: "blur(2px)",
+                      backgroundImage:
+                        "radial-gradient(rgba(220,38,38,0.12) 1px, transparent 1px)",
+                      backgroundSize: "6px 6px",
+                    }}
+                    aria-label="Example listing"
+                  >
+                    EXAMPLE
+                    <span className="block mt-1 text-[11px] font-extrabold tracking-normal normal-case">
+                      create one like this!
+                    </span>
+                  </div>
+                )}
+
                 <div className="flex items-start gap-5">
                   <img
                     src="/avatar-placeholder.png"
@@ -427,6 +464,13 @@ setAgreeTerms(v === TERMS_VERSION);
                         </span>
                       ))}
                     </div>
+
+                    {/* ✅ Small honesty line (optional but good for trust) */}
+                    {provider.is_example && (
+                      <div className="mt-4 text-sm text-muted-foreground">
+                        {exampleText}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -443,6 +487,14 @@ setAgreeTerms(v === TERMS_VERSION);
                 <p className="text-muted-foreground mb-4">
                   Choose a time, see the total (incl. 7.5% fee), then pay securely.
                 </p>
+
+                {/* ✅ If example, show an obvious callout */}
+                {provider.is_example && (
+                  <div className="mb-4 rounded-2xl border border-border bg-muted p-4 text-sm text-muted-foreground">
+                    <div className="font-semibold text-foreground">Example listing</div>
+                    <div className="mt-1">{exampleText}</div>
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <div>
@@ -552,9 +604,18 @@ setAgreeTerms(v === TERMS_VERSION);
                   <Button
                     className="w-full"
                     onClick={handleBookAndPay}
-                    disabled={bookingLoading || !!pricing?.error || (needsTermsReaccept && !agreeTerms)}
+                    disabled={
+                      bookingLoading ||
+                      !!pricing?.error ||
+                      (needsTermsReaccept && !agreeTerms) ||
+                      !!provider.is_example // ✅ disables booking on example listings
+                    }
                   >
-                    {bookingLoading ? "Redirecting to payment…" : "Book & Pay"}
+                    {provider.is_example
+                      ? "Example listing (not bookable)"
+                      : bookingLoading
+                        ? "Redirecting to payment…"
+                        : "Book & Pay"}
                   </Button>
 
                   <Button

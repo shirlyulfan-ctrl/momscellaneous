@@ -12,7 +12,7 @@ const FeaturedProviders = () => {
       const { data, error } = await supabase
         .from("provider_profiles")
         .select(
-          "id, location, neighborhood, hourly_rate, services, verified, available, user_id, created_at"
+          "id, location, neighborhood, hourly_rate, services, verified, available, user_id, created_at, is_example, example_label"
         )
         .order("created_at", { ascending: false })
         .limit(6);
@@ -46,14 +46,14 @@ const FeaturedProviders = () => {
                 rating={5}
                 reviews={0}
                 location={
-                  [provider.neighborhood, provider.location]
-                    .filter(Boolean)
-                    .join(", ") || "Local"
+                  [provider.neighborhood, provider.location].filter(Boolean).join(", ") || "Local"
                 }
                 hourlyRate={Number(provider.hourly_rate ?? 0)}
                 services={provider.services ?? []}
                 verified={!!provider.verified}
                 available={!!provider.available}
+                isExample={!!provider.is_example}
+                exampleLabel={(provider.example_label ?? "").trim()}
               />
             </div>
           ))}

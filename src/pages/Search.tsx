@@ -25,6 +25,10 @@ type ProviderProfileRow = {
   available: boolean | null;
   years_experience: number | null;
   created_at: string;
+
+  // ✅ added for example stamp support
+  is_example?: boolean | null;
+  example_label?: string | null;
 };
 
 type ProviderAvailabilitySlot = {
@@ -160,7 +164,7 @@ const SearchPage = () => {
       const { data, error } = await supabase
         .from("provider_profiles")
         .select(
-          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at"
+          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at,is_example,example_label"
         )
         .order("created_at", { ascending: false });
 
@@ -491,6 +495,10 @@ const SearchPage = () => {
         verified: !!p.verified,
         available: !!p.available,
         bio: p.bio ?? "",
+
+        // ✅ pass-through for stamping on the card
+        isExample: !!p.is_example,
+        exampleLabel: (p.example_label ?? "").trim(),
       };
     });
   }, [filteredProviders]);
@@ -626,12 +634,34 @@ const SearchPage = () => {
                 </div>
               ) : cardModels.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {cardModels.map((provider, index) => (
+                  {cardModels.map((provider: any, index) => (
                     <div
                       key={`${provider.id}-${index}`}
                       onClick={() => navigate(`/providers/${provider.id}`)}
-                      className="cursor-pointer"
+                      className="cursor-pointer relative"
                     >
+                      {/* ✅ Stamp overlay at the Search card level (no ProviderCard changes required) */}
+                      {provider.isExample && (
+                        <div
+                          className="absolute top-3 right-3 z-10 rotate-12 rounded-xl border-2 px-3 py-2 font-extrabold uppercase tracking-widest shadow-lg pointer-events-none"
+                          style={{
+                            borderColor: "rgba(220, 38, 38, 0.85)",
+                            color: "rgba(220, 38, 38, 0.9)",
+                            backgroundColor: "rgba(255,255,255,0.78)",
+                            backdropFilter: "blur(2px)",
+                            backgroundImage:
+                              "radial-gradient(rgba(220,38,38,0.12) 1px, transparent 1px)",
+                            backgroundSize: "6px 6px",
+                          }}
+                          aria-label="Example listing"
+                        >
+                          EXAMPLE
+                          <span className="block mt-1 text-[11px] font-extrabold tracking-normal normal-case">
+                            create one like this!
+                          </span>
+                        </div>
+                      )}
+
                       <ProviderCard {...provider} />
                     </div>
                   ))}
