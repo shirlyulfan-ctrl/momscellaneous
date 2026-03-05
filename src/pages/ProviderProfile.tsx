@@ -1,3 +1,4 @@
+// src/pages/providerprofile.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import Header from "@/components/Header";
@@ -21,10 +22,6 @@ type ProviderProfileRow = {
   available: boolean | null;
   years_experience: number | null;
   created_at: string;
-
-  // ✅ added for example stamp
-  is_example?: boolean | null;
-  example_label?: string | null;
 };
 
 const FEE_RATE = 0.075;
@@ -52,6 +49,7 @@ export default function ProviderProfile() {
   const navigate = useNavigate();
 
   const [provider, setProvider] = useState<ProviderProfileRow | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -89,9 +87,7 @@ export default function ProviderProfile() {
 
       const { data, error } = await supabase
         .from("provider_profiles")
-        .select(
-          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at,is_example,example_label"
-        )
+        .select("id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at")
         .eq("id", id)
         .single();
 
@@ -99,8 +95,26 @@ export default function ProviderProfile() {
         console.error("ProviderProfile load error:", error);
         setProvider(null);
         setNotFound(true);
+        setAvatarUrl(null);
       } else {
-        setProvider(data as ProviderProfileRow);
+        const row = data as ProviderProfileRow;
+        setProvider(row);
+
+        // Load primary photo as avatar
+        const { data: media, error: mediaErr } = await supabase
+          .from("provider_media")
+          .select("url")
+          .eq("provider_id", row.id)
+          .eq("is_primary", true)
+          .eq("media_type", "photo")
+          .limit(1);
+
+        if (mediaErr) {
+          console.error("ProviderProfile avatar load error:", mediaErr);
+          setAvatarUrl(null);
+        } else {
+          setAvatarUrl(media?.[0]?.url ?? null);
+        }
       }
 
       setLoading(false);
@@ -191,12 +205,6 @@ export default function ProviderProfile() {
     if (!ensureDisclaimerSeen()) return;
 
     if (!provider) return;
-
-    // ✅ Optional: prevent booking example listings (recommended for trust)
-    if (provider.is_example) {
-      setBookingError("This is an example listing. Create your own listing like this to start offering help.");
-      return;
-    }
 
     const { data: authData, error: authErr } = await supabase.auth.getUser();
     const userId = authData?.user?.id;
@@ -370,10 +378,6 @@ export default function ProviderProfile() {
     }
   };
 
-  const exampleText =
-    provider?.example_label?.trim() ||
-    "Example listing — create one like this!";
-
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -401,33 +405,10 @@ export default function ProviderProfile() {
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* ✅ Make this container relative so the stamp can overlay cleanly */}
-              <div className="lg:col-span-2 bg-card rounded-2xl p-6 border border-border shadow-card relative overflow-hidden">
-                {/* ✅ Example stamp */}
-                {provider.is_example && (
-                  <div
-                    className="absolute top-4 right-4 z-10 rotate-12 rounded-xl border-2 px-3 py-2 font-extrabold uppercase tracking-widest shadow-lg pointer-events-none"
-                    style={{
-                      borderColor: "rgba(220, 38, 38, 0.85)",
-                      color: "rgba(220, 38, 38, 0.9)",
-                      backgroundColor: "rgba(255,255,255,0.78)",
-                      backdropFilter: "blur(2px)",
-                      backgroundImage:
-                        "radial-gradient(rgba(220,38,38,0.12) 1px, transparent 1px)",
-                      backgroundSize: "6px 6px",
-                    }}
-                    aria-label="Example listing"
-                  >
-                    EXAMPLE
-                    <span className="block mt-1 text-[11px] font-extrabold tracking-normal normal-case">
-                      create one like this!
-                    </span>
-                  </div>
-                )}
-
+              <div className="lg:col-span-2 bg-card rounded-2xl p-6 border border-border shadow-card">
                 <div className="flex items-start gap-5">
                   <img
-                    src="/avatar-placeholder.png"
+                    src={avatarUrl ?? "/avatar-placeholder.png"}
                     alt={displayName}
                     className="w-20 h-20 rounded-2xl object-cover border border-border"
                   />
@@ -464,13 +445,6 @@ export default function ProviderProfile() {
                         </span>
                       ))}
                     </div>
-
-                    {/* ✅ Small honesty line (optional but good for trust) */}
-                    {provider.is_example && (
-                      <div className="mt-4 text-sm text-muted-foreground">
-                        {exampleText}
-                      </div>
-                    )}
                   </div>
                 </div>
 
@@ -482,19 +456,12 @@ export default function ProviderProfile() {
                 </div>
               </div>
 
+              {/* (Booking sidebar unchanged) */}
               <aside className="bg-card rounded-2xl p-6 border border-border shadow-card h-fit">
                 <h2 className="text-lg font-semibold text-foreground mb-1">Book this helper</h2>
                 <p className="text-muted-foreground mb-4">
                   Choose a time, see the total (incl. 7.5% fee), then pay securely.
                 </p>
-
-                {/* ✅ If example, show an obvious callout */}
-                {provider.is_example && (
-                  <div className="mb-4 rounded-2xl border border-border bg-muted p-4 text-sm text-muted-foreground">
-                    <div className="font-semibold text-foreground">Example listing</div>
-                    <div className="mt-1">{exampleText}</div>
-                  </div>
-                )}
 
                 <div className="space-y-3">
                   <div>
@@ -604,18 +571,9 @@ export default function ProviderProfile() {
                   <Button
                     className="w-full"
                     onClick={handleBookAndPay}
-                    disabled={
-                      bookingLoading ||
-                      !!pricing?.error ||
-                      (needsTermsReaccept && !agreeTerms) ||
-                      !!provider.is_example // ✅ disables booking on example listings
-                    }
+                    disabled={bookingLoading || !!pricing?.error || (needsTermsReaccept && !agreeTerms)}
                   >
-                    {provider.is_example
-                      ? "Example listing (not bookable)"
-                      : bookingLoading
-                        ? "Redirecting to payment…"
-                        : "Book & Pay"}
+                    {bookingLoading ? "Redirecting to payment…" : "Book & Pay"}
                   </Button>
 
                   <Button

@@ -118,7 +118,7 @@ export default function BecomeProvider() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // --- provider profile ID for availability ---
+  // --- provider profile ID for availability + media (always prefer this over existingProfile.id) ---
   const [providerProfileId, setProviderProfileId] = useState<string | null>(null);
   const [loadingProvider, setLoadingProvider] = useState(true);
   const [providerError, setProviderError] = useState<string | null>(null);
@@ -127,7 +127,7 @@ export default function BecomeProvider() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // profile row
+  // profile row (full record)
   const [existingProfile, setExistingProfile] = useState<ProviderProfileRow | null>(null);
 
   // media
@@ -170,7 +170,8 @@ export default function BecomeProvider() {
   }, [existingProfile]);
 
   const needsProviderAgreementReaccept = useMemo(() => {
-    return (existingProfile?.accepted_provider_agreement_version ?? null) !== PROVIDER_AGREEMENT_VERSION;
+    return (existingProfile?.accepted_provider_agreement_version ?? null) !==
+      PROVIDER_AGREEMENT_VERSION;
   }, [existingProfile]);
 
   const mustAcceptAgreements = needsTermsReaccept || needsProviderAgreementReaccept || !existingProfile;
@@ -180,11 +181,20 @@ export default function BecomeProvider() {
     if (!authLoading && !user) navigate("/auth");
   }, [user, authLoading, navigate]);
 
-  // Load existing profile
+  // Load existing profile (initial)
   useEffect(() => {
     if (user) loadExistingProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  // ✅ IMPORTANT: after we ensure/learn providerProfileId, reload the full profile + media.
+  // This fixes the "must save first" issue caused by timing (blank row created AFTER first load).
+  useEffect(() => {
+    if (user && providerProfileId) {
+      loadExistingProfile();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, providerProfileId]);
 
   const loadExistingProfile = async () => {
     if (!user) return;
@@ -229,6 +239,9 @@ export default function BecomeProvider() {
       if (row) {
         setExistingProfile(row);
 
+        // Keep providerProfileId synced (useful if ensureProviderProfile ran first)
+        if (!providerProfileId) setProviderProfileId(row.id);
+
         setBio(row.bio || "");
         setHourlyRate(row.hourly_rate != null ? String(row.hourly_rate) : "");
         setTaskRate(row.task_rate != null ? String(row.task_rate) : "");
@@ -251,7 +264,8 @@ export default function BecomeProvider() {
 
         // agreements checkbox defaults
         const acceptedTermsCurrent = (row.accepted_terms_version ?? null) === TERMS_VERSION;
-        const acceptedProvCurrent = (row.accepted_provider_agreement_version ?? null) === PROVIDER_AGREEMENT_VERSION;
+        const acceptedProvCurrent =
+          (row.accepted_provider_agreement_version ?? null) === PROVIDER_AGREEMENT_VERSION;
         setAgreeTerms(acceptedTermsCurrent);
         setAgreeProviderAgreement(acceptedProvCurrent);
 
@@ -293,7 +307,7 @@ export default function BecomeProvider() {
     }
   };
 
-  // Ensure a provider profile exists and get its ID (for AvailabilityForm)
+  // Ensure a provider profile exists and get its ID (for AvailabilityForm + media)
   useEffect(() => {
     let cancelled = false;
 
@@ -427,17 +441,22 @@ export default function BecomeProvider() {
   }, [existingProfile?.id, existingProfile?.stripe_account_id]);
 
   const handleServiceToggle = (service: string) => {
-    setSelectedServices((prev) => (prev.includes(service) ? prev.filter((s) => s !== service) : [...prev, service]));
+    setSelectedServices((prev) =>
+      prev.includes(service) ? prev.filter((s) => s !== service) : [...prev, service]
+    );
   };
 
   const handleCategoryToggle = (categoryId: string) => {
     if (categoryId === "all") return;
-    setSelectedCategories((prev) => (prev.includes(categoryId) ? prev.filter((c) => c !== categoryId) : [...prev, categoryId]));
+    setSelectedCategories((prev) =>
+      prev.includes(categoryId) ? prev.filter((c) => c !== categoryId) : [...prev, categoryId]
+    );
   };
 
+  // ✅ UPDATED: allow upload as soon as providerProfileId exists (no "save first" requirement)
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files || !user || !existingProfile) return;
+    if (!files || !user || !providerProfileId) return;
 
     setUploadingMedia(true);
     try {
@@ -446,15 +465,19 @@ export default function BecomeProvider() {
         const fileExt = file.name.split(".").pop();
         const fileName = `${user.id}/${Date.now()}.${fileExt}`;
 
-        const { error: uploadError } = await supabase.storage.from("provider-media").upload(fileName, file);
+        const { error: uploadError } = await supabase.storage
+          .from("provider-media")
+          .upload(fileName, file);
         if (uploadError) throw uploadError;
 
-        const publicUrl = supabase.storage.from("provider-media").getPublicUrl(fileName).data.publicUrl;
+        const publicUrl = supabase.storage
+          .from("provider-media")
+          .getPublicUrl(fileName).data.publicUrl;
 
         const { data: mediaRecord, error: insertError } = await supabase
           .from("provider_media")
           .insert({
-            provider_id: existingProfile.id,
+            provider_id: providerProfileId,
             media_type: isVideo ? "video" : "photo",
             url: publicUrl,
             is_primary: mediaFiles.length === 0,
@@ -463,13 +486,24 @@ export default function BecomeProvider() {
           .single();
 
         if (insertError) throw insertError;
+
         setMediaFiles((prev) => [...prev, mediaRecord]);
+
+        // If this is the first photo, refresh profile/media (optional but keeps UI consistent)
+        if (mediaFiles.length === 0) {
+          // no await required; but keep it simple and consistent:
+          // await loadExistingProfile();
+        }
       }
 
       toast({ title: t.common.success, description: "Media uploaded successfully!" });
     } catch (error) {
       console.error("Error uploading media:", error);
-      toast({ title: t.common.error, description: "Failed to upload media", variant: "destructive" });
+      toast({
+        title: t.common.error,
+        description: "Failed to upload media",
+        variant: "destructive",
+      });
     } finally {
       setUploadingMedia(false);
     }
@@ -484,15 +518,21 @@ export default function BecomeProvider() {
       toast({ title: t.common.success, description: "Media deleted successfully!" });
     } catch (error) {
       console.error("Error deleting media:", error);
-      toast({ title: t.common.error, description: "Failed to delete media", variant: "destructive" });
+      toast({
+        title: t.common.error,
+        description: "Failed to delete media",
+        variant: "destructive",
+      });
     }
   };
 
+  // ✅ UPDATED: use providerProfileId when available
   const handleSetPrimary = async (mediaId: string) => {
     try {
-      if (!existingProfile?.id) return;
+      const pid = providerProfileId ?? existingProfile?.id;
+      if (!pid) return;
 
-      await supabase.from("provider_media").update({ is_primary: false }).eq("provider_id", existingProfile.id);
+      await supabase.from("provider_media").update({ is_primary: false }).eq("provider_id", pid);
       await supabase.from("provider_media").update({ is_primary: true }).eq("id", mediaId);
 
       setMediaFiles((prev) => prev.map((m) => ({ ...m, is_primary: m.id === mediaId })));
@@ -513,7 +553,10 @@ export default function BecomeProvider() {
 
       if (!resp.ok) return { ok: false as const, error: (json as any)?.error || "Geocode failed" };
       if (!("found" in json) || json.found === false) {
-        return { ok: false as const, error: "We couldn’t find that location. Try a more specific town + state." };
+        return {
+          ok: false as const,
+          error: "We couldn’t find that location. Try a more specific town + state.",
+        };
       }
 
       return { ok: true as const, lat: json.lat, lng: json.lng, place_name: json.place_name || "" };
@@ -551,33 +594,44 @@ export default function BecomeProvider() {
       window.location.href = json.url;
     } catch (err) {
       console.error("Stripe connect error:", err);
-      toast({ title: "Stripe error", description: "Could not start Stripe onboarding.", variant: "destructive" });
+      toast({
+        title: "Stripe error",
+        description: "Could not start Stripe onboarding.",
+        variant: "destructive",
+      });
     }
   };
 
   const handleSaveProfile = async () => {
     if (!user) return;
 
-    // Agreements required
     if (mustAcceptAgreements) {
       if (!agreeTerms) {
-        toast({ title: t.common.error, description: "Please accept the Terms & Conditions to continue.", variant: "destructive" });
+        toast({
+          title: t.common.error,
+          description: "Please accept the Terms & Conditions to continue.",
+          variant: "destructive",
+        });
         return;
       }
       if (!agreeProviderAgreement) {
-        toast({ title: t.common.error, description: "Please accept the Provider Agreement to continue.", variant: "destructive" });
+        toast({
+          title: t.common.error,
+          description: "Please accept the Provider Agreement to continue.",
+          variant: "destructive",
+        });
         return;
       }
     }
 
-    // If travel radius > 0, we REQUIRE a home base and we will geocode it automatically
     const needsDistanceSearch = Number(travelRadiusMiles ?? 0) > 0;
     const homeBaseTrim = homeBase.trim();
 
     if (needsDistanceSearch && !homeBaseTrim) {
       toast({
         title: t.common.error,
-        description: "Please enter your home base (town/address) so customers can find you by distance.",
+        description:
+          "Please enter your home base (town/address) so customers can find you by distance.",
         variant: "destructive",
       });
       return;
@@ -592,7 +646,6 @@ export default function BecomeProvider() {
       let nextLng = homeLng;
       let resolvedName = homeResolvedName;
 
-      // If we need distance and we don't have coordinates yet, geocode now
       if (needsDistanceSearch && (nextLat == null || nextLng == null)) {
         const g = await geocodeHomeBase(homeBaseTrim);
         if (!g.ok) {
@@ -608,11 +661,8 @@ export default function BecomeProvider() {
         setHomeResolvedName(resolvedName);
       }
 
-      // Backward compatibility:
-      // - We remove Location/Neighborhood fields from UI
-      // - But we still store location = homeBase so older UI/filters don’t break
       const locationCompat = homeBaseTrim;
-      const neighborhoodCompat = ""; // optional: derive neighborhood later
+      const neighborhoodCompat = "";
 
       const profileData: any = {
         user_id: user.id,
@@ -636,14 +686,16 @@ export default function BecomeProvider() {
         accepted_provider_agreement_at: nowIso,
         accepted_provider_agreement_version: PROVIDER_AGREEMENT_VERSION,
 
-        // travel fields
         travel_radius_miles: Number.isFinite(Number(travelRadiusMiles)) ? Number(travelRadiusMiles) : 0,
         home_lat: nextLat,
         home_lng: nextLng,
       };
 
       if (existingProfile?.id) {
-        const { error } = await supabase.from("provider_profiles").update(profileData).eq("id", existingProfile.id);
+        const { error } = await supabase
+          .from("provider_profiles")
+          .update(profileData)
+          .eq("id", existingProfile.id);
         if (error) throw error;
       } else {
         const { data, error } = await supabase
@@ -681,7 +733,6 @@ export default function BecomeProvider() {
         setExistingProfile(data as ProviderProfileRow);
       }
 
-      // Mark user as provider
       await supabase.from("profiles").update({ is_provider: true }).eq("user_id", user.id);
 
       await loadExistingProfile();
@@ -689,7 +740,11 @@ export default function BecomeProvider() {
       toast({ title: t.common.success, description: t.provider.profileSaved });
     } catch (error) {
       console.error("Error saving profile:", error);
-      toast({ title: t.common.error, description: t.provider.profileError, variant: "destructive" });
+      toast({
+        title: t.common.error,
+        description: t.provider.profileError,
+        variant: "destructive",
+      });
     } finally {
       setIsSaving(false);
     }
@@ -707,7 +762,8 @@ export default function BecomeProvider() {
     );
   }
 
-  const saveDisabled = isSaving || geocoding || (mustAcceptAgreements && (!agreeTerms || !agreeProviderAgreement));
+  const saveDisabled =
+    isSaving || geocoding || (mustAcceptAgreements && (!agreeTerms || !agreeProviderAgreement));
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -723,7 +779,7 @@ export default function BecomeProvider() {
             </h1>
           </div>
 
-          {/* Home base + travel distance (replaces separate Location/Neighborhood UI) */}
+          {/* Home base + travel distance */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -958,8 +1014,9 @@ export default function BecomeProvider() {
               <CardDescription>{t.provider.photosDesc}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!existingProfile ? (
-                <p className="text-sm text-muted-foreground">Save your profile first to upload media.</p>
+              {/* ✅ No "save first" gate anymore. Upload is available once providerProfileId exists. */}
+              {!providerProfileId ? (
+                <p className="text-sm text-muted-foreground">Loading your provider profile…</p>
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {mediaFiles.map((media) => (
@@ -1035,7 +1092,9 @@ export default function BecomeProvider() {
             </CardHeader>
             <CardContent className="space-y-3">
               {(needsTermsReaccept || !existingProfile) && (
-                <p className="text-sm text-muted-foreground">We may require re-acceptance if the agreement version changes.</p>
+                <p className="text-sm text-muted-foreground">
+                  We may require re-acceptance if the agreement version changes.
+                </p>
               )}
 
               <label className="flex items-start gap-3 text-sm">
@@ -1107,9 +1166,7 @@ export default function BecomeProvider() {
                     ? "Checking Stripe status…"
                     : connectStatusError
                     ? connectStatusError
-                    : `charges_enabled: ${chargesEnabled ? "true" : "false"} • payouts_enabled: ${
-                        payoutsEnabled ? "true" : "false"
-                      }`}
+                    : `charges_enabled: ${chargesEnabled ? "true" : "false"} • payouts_enabled: ${payoutsEnabled ? "true" : "false"}`}
                 </div>
               </CardContent>
             </Card>

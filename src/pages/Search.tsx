@@ -25,10 +25,6 @@ type ProviderProfileRow = {
   available: boolean | null;
   years_experience: number | null;
   created_at: string;
-
-  // ✅ added for example stamp support
-  is_example?: boolean | null;
-  example_label?: string | null;
 };
 
 type ProviderAvailabilitySlot = {
@@ -122,6 +118,9 @@ const SearchPage = () => {
   const [rows, setRows] = useState<ProviderProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // NEW: primary avatar urls by provider id
+  const [avatarByProviderId, setAvatarByProviderId] = useState<Record<string, string>>({});
+
   // Availability matches
   const [availabilityProviderIds, setAvailabilityProviderIds] = useState<Set<string> | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
@@ -156,7 +155,7 @@ const SearchPage = () => {
     return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs < startMs;
   }, [hasWindow, startDateTime, endDateTime]);
 
-  // Load providers
+  // Load providers + their primary avatar media
   useEffect(() => {
     const loadProviders = async () => {
       setLoading(true);
@@ -164,15 +163,43 @@ const SearchPage = () => {
       const { data, error } = await supabase
         .from("provider_profiles")
         .select(
-          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at,is_example,example_label"
+          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at"
         )
         .order("created_at", { ascending: false });
 
       if (error) {
         console.error("Failed to load provider_profiles:", error);
         setRows([]);
+        setAvatarByProviderId({});
+        setLoading(false);
+        return;
+      }
+
+      const providers = (data ?? []) as ProviderProfileRow[];
+      setRows(providers);
+
+      // Fetch primary photos for these providers
+      const ids = providers.map((p) => p.id);
+      if (ids.length) {
+        const { data: media, error: mediaErr } = await supabase
+          .from("provider_media")
+          .select("provider_id,url")
+          .in("provider_id", ids)
+          .eq("is_primary", true)
+          .eq("media_type", "photo");
+
+        if (mediaErr) {
+          console.error("Failed to load provider_media primary avatars:", mediaErr);
+          setAvatarByProviderId({});
+        } else {
+          const map: Record<string, string> = {};
+          for (const m of media ?? []) {
+            if (m?.provider_id && m?.url) map[m.provider_id] = m.url;
+          }
+          setAvatarByProviderId(map);
+        }
       } else {
-        setRows((data ?? []) as ProviderProfileRow[]);
+        setAvatarByProviderId({});
       }
 
       setLoading(false);
@@ -181,7 +208,7 @@ const SearchPage = () => {
     loadProviders();
   }, []);
 
-  // NEW: location -> geocode -> RPC providers_who_can_reach
+  // location -> geocode -> RPC providers_who_can_reach
   useEffect(() => {
     const run = async () => {
       setRadiusError(null);
@@ -199,7 +226,6 @@ const SearchPage = () => {
         const resp = await fetch(`/.netlify/functions/geocode?q=${encodeURIComponent(q)}`);
         const json = (await resp.json()) as GeocodeResponse;
 
-        // if a newer request started, ignore this one
         if (myId !== geocodeReqId.current) return;
 
         if (!resp.ok) {
@@ -245,22 +271,17 @@ const SearchPage = () => {
       }
     };
 
-    // small debounce so it doesn't geocode on every keystroke instantly
     const t = setTimeout(run, 350);
     return () => clearTimeout(t);
   }, [location]);
 
-  // Availability filtering:
-  // A) If queryType=recurring and time+days exist, match providers who have a slot containing that time
-  //    for EACH selected weekday (within next 56 days).
-  // B) Else if start+end exists, do window coverage match.
+  // Availability filtering (unchanged)
   useEffect(() => {
     const fetchAvailabilityMatches = async () => {
       setAvailabilityError(null);
 
       const isRecurringQuery = queryType === "recurring" && !!timeParam && !!daysParam;
 
-      // --- Recurring mode (from Home page) ---
       if (isRecurringQuery) {
         const requestedMinutes = timeToMinutes(timeParam!);
         if (requestedMinutes === null) {
@@ -302,8 +323,6 @@ const SearchPage = () => {
         }
 
         const slots = (data ?? []) as ProviderAvailabilitySlot[];
-
-        // For each provider, track which selected weekdays they cover at the requested time.
         const providerToWeekdayOK = new Map<string, Set<number>>();
 
         for (const s of slots) {
@@ -312,8 +331,6 @@ const SearchPage = () => {
           if (!Number.isFinite(utcStart.getTime()) || !Number.isFinite(utcEnd.getTime())) continue;
 
           const tz = s.timezone || "America/New_York";
-
-          // Convert UTC -> provider local (important for correct weekday + clock time)
           const startLocal = new Date(utcStart.toLocaleString("en-US", { timeZone: tz }));
           const endLocal = new Date(utcEnd.toLocaleString("en-US", { timeZone: tz }));
 
@@ -323,14 +340,10 @@ const SearchPage = () => {
           const stMin = startLocal.getHours() * 60 + startLocal.getMinutes();
           const enMin = endLocal.getHours() * 60 + endLocal.getMinutes();
 
-          // Match if slot CONTAINS requested time (no fixed duration assumption)
           let contains = stMin <= requestedMinutes && requestedMinutes < enMin;
-
-          // Support overnight slots (e.g., 23:00 -> 01:00)
           if (enMin < stMin) {
             contains = requestedMinutes >= stMin || requestedMinutes < enMin;
           }
-
           if (!contains) continue;
 
           const set = providerToWeekdayOK.get(s.provider_id) ?? new Set<number>();
@@ -349,7 +362,6 @@ const SearchPage = () => {
         return;
       }
 
-      // --- Window mode (manual /search date-time inputs) ---
       if (!hasWindow) {
         setAvailabilityProviderIds(null);
         return;
@@ -366,7 +378,6 @@ const SearchPage = () => {
 
       setAvailabilityLoading(true);
 
-      // Slot must fully cover the requested window
       const { data, error } = await supabase
         .from("provider_availability")
         .select("provider_id")
@@ -388,25 +399,21 @@ const SearchPage = () => {
     fetchAvailabilityMatches();
   }, [queryType, timeParam, daysParam, hasWindow, isWindowInvalid, startDateTime, endDateTime]);
 
-  // Filter + sort providers (client-side)
   const filteredProviders = useMemo(() => {
     let result = [...rows];
 
     const recurringActive = queryType === "recurring" && !!timeParam && !!daysParam;
 
-    // 1) Apply radius constraint IF location is set (radiusProviderIds will be null until resolved)
     if (location.trim() && radiusProviderIds !== null) {
       const allowed = radiusProviderIds ?? new Set<string>();
       result = result.filter((p) => allowed.has(p.id));
     }
 
-    // 2) Apply availability constraint
     if ((hasWindow || recurringActive) && availabilityProviderIds !== null) {
       const allowed = availabilityProviderIds ?? new Set<string>();
       result = result.filter((p) => allowed.has(p.id));
     }
 
-    // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter((p) => {
@@ -414,42 +421,29 @@ const SearchPage = () => {
         const loc = (p.location ?? "").toLowerCase();
         const nbh = (p.neighborhood ?? "").toLowerCase();
         const services = (p.services ?? []).map((s) => s.toLowerCase());
-        return (
-          bio.includes(q) ||
-          loc.includes(q) ||
-          nbh.includes(q) ||
-          services.some((s) => s.includes(q))
-        );
+        return bio.includes(q) || loc.includes(q) || nbh.includes(q) || services.some((s) => s.includes(q));
       });
     }
 
-    // Neighborhood
     if (selectedNeighborhood !== "All Neighborhoods") {
       result = result.filter((p) => (p.neighborhood ?? "") === selectedNeighborhood);
     }
 
-    // Category (maps to services)
     if (selectedCategory !== "all") {
-      const catLabel =
-        (categories as any[]).find((c: any) => c.id === selectedCategory)?.label ?? "";
+      const catLabel = (categories as any[]).find((c: any) => c.id === selectedCategory)?.label ?? "";
       const target1 = selectedCategory.toLowerCase();
       const target2 = catLabel.toLowerCase();
 
       result = result.filter((p) => {
         const services = (p.services ?? []).map((s) => s.toLowerCase());
-        return (
-          services.some((s) => s.includes(target1)) ||
-          (target2 ? services.some((s) => s.includes(target2)) : false)
-        );
+        return services.some((s) => s.includes(target1)) || (target2 ? services.some((s) => s.includes(target2)) : false);
       });
     }
 
-    // Existing boolean availability toggle
     if (showAvailableOnly) {
       result = result.filter((p) => !!p.available);
     }
 
-    // Sort
     switch (sortBy) {
       case "price-low":
         result.sort((a, b) => Number(a.hourly_rate ?? 0) - Number(b.hourly_rate ?? 0));
@@ -457,7 +451,6 @@ const SearchPage = () => {
       case "price-high":
         result.sort((a, b) => Number(b.hourly_rate ?? 0) - Number(a.hourly_rate ?? 0));
         break;
-      // rating/reviews default: keep current order
       default:
         break;
     }
@@ -479,14 +472,13 @@ const SearchPage = () => {
     sortBy,
   ]);
 
-  // Map to ProviderCard props
   const cardModels = useMemo(() => {
     return filteredProviders.map((p) => {
       const loc = [p.neighborhood, p.location].filter(Boolean).join(", ") || "Local";
       return {
         id: p.id,
         name: `Helper in ${p.location ?? "your area"}`,
-        avatar: "/avatar-placeholder.png",
+        avatar: avatarByProviderId[p.id] ?? "/avatar-placeholder.png",
         rating: 5,
         reviews: 0,
         location: loc,
@@ -495,13 +487,9 @@ const SearchPage = () => {
         verified: !!p.verified,
         available: !!p.available,
         bio: p.bio ?? "",
-
-        // ✅ pass-through for stamping on the card
-        isExample: !!p.is_example,
-        exampleLabel: (p.example_label ?? "").trim(),
       };
     });
-  }, [filteredProviders]);
+  }, [filteredProviders, avatarByProviderId]);
 
   const showCountLoading = loading || availabilityLoading || radiusLoading;
 
@@ -511,18 +499,13 @@ const SearchPage = () => {
 
       <main className="pt-24 pb-20">
         <div className="container mx-auto px-4">
-          {/* Header */}
           <div className="text-center mb-10">
             <h1 className="text-4xl font-bold text-foreground mb-4">Find Local Helpers</h1>
-            <p className="text-xl text-muted-foreground">
-              Search for trusted providers in your neighborhood
-            </p>
+            <p className="text-xl text-muted-foreground">Search for trusted providers in your neighborhood</p>
           </div>
 
-          {/* Search Bar */}
           <div className="bg-card rounded-2xl p-6 shadow-card mb-8">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {/* What do you need */}
               <div className="flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
                 <Search className="w-5 h-5 text-muted-foreground" />
                 <input
@@ -534,7 +517,6 @@ const SearchPage = () => {
                 />
               </div>
 
-              {/* Location */}
               <div className="flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
                 <MapPin className="w-5 h-5 text-muted-foreground" />
                 <input
@@ -546,7 +528,6 @@ const SearchPage = () => {
                 />
               </div>
 
-              {/* Start */}
               <div className="flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
                 <Clock className="w-5 h-5 text-muted-foreground" />
                 <div className="flex-1">
@@ -560,7 +541,6 @@ const SearchPage = () => {
                 </div>
               </div>
 
-              {/* End */}
               <div className="flex items-center gap-3 bg-muted rounded-xl px-4 py-3">
                 <Clock className="w-5 h-5 text-muted-foreground" />
                 <div className="flex-1">
@@ -594,7 +574,6 @@ const SearchPage = () => {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-            {/* Filters */}
             <div className={`lg:block ${showFilters ? "block" : "hidden"}`}>
               <SearchFilters
                 categories={categories as any}
@@ -610,7 +589,6 @@ const SearchPage = () => {
               />
             </div>
 
-            {/* Results */}
             <div className="lg:col-span-3">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold text-foreground">
@@ -634,34 +612,12 @@ const SearchPage = () => {
                 </div>
               ) : cardModels.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {cardModels.map((provider: any, index) => (
+                  {cardModels.map((provider, index) => (
                     <div
                       key={`${provider.id}-${index}`}
                       onClick={() => navigate(`/providers/${provider.id}`)}
-                      className="cursor-pointer relative"
+                      className="cursor-pointer"
                     >
-                      {/* ✅ Stamp overlay at the Search card level (no ProviderCard changes required) */}
-                      {provider.isExample && (
-                        <div
-                          className="absolute top-3 right-3 z-10 rotate-12 rounded-xl border-2 px-3 py-2 font-extrabold uppercase tracking-widest shadow-lg pointer-events-none"
-                          style={{
-                            borderColor: "rgba(220, 38, 38, 0.85)",
-                            color: "rgba(220, 38, 38, 0.9)",
-                            backgroundColor: "rgba(255,255,255,0.78)",
-                            backdropFilter: "blur(2px)",
-                            backgroundImage:
-                              "radial-gradient(rgba(220,38,38,0.12) 1px, transparent 1px)",
-                            backgroundSize: "6px 6px",
-                          }}
-                          aria-label="Example listing"
-                        >
-                          EXAMPLE
-                          <span className="block mt-1 text-[11px] font-extrabold tracking-normal normal-case">
-                            create one like this!
-                          </span>
-                        </div>
-                      )}
-
                       <ProviderCard {...provider} />
                     </div>
                   ))}
