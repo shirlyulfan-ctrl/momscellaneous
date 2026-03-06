@@ -1,11 +1,10 @@
-// src/pages/providerprofile.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { MapPin, BadgeCheck, Clock, ArrowLeft } from "lucide-react";
+import { MapPin, BadgeCheck, Clock, ArrowLeft, Ban } from "lucide-react";
 
 import { TERMS_VERSION } from "@/lib/legalVersions";
 import BackgroundCheckDisclaimerDialog from "@/components/BackgroundCheckDisclaimerDialog";
@@ -22,6 +21,17 @@ type ProviderProfileRow = {
   available: boolean | null;
   years_experience: number | null;
   created_at: string;
+
+  // NEW
+  is_example?: boolean | null;
+};
+
+type ProviderMediaRow = {
+  id: string;
+  provider_id: string;
+  url: string;
+  is_primary: boolean | null;
+  media_type: string | null;
 };
 
 const FEE_RATE = 0.075;
@@ -41,7 +51,7 @@ function hoursBetween(start: Date, end: Date) {
 }
 
 function weekday0Sunday(date: Date) {
-  return date.getDay(); // 0=Sun..6=Sat
+  return date.getDay();
 }
 
 export default function ProviderProfile() {
@@ -49,7 +59,7 @@ export default function ProviderProfile() {
   const navigate = useNavigate();
 
   const [provider, setProvider] = useState<ProviderProfileRow | null>(null);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string>("/avatar-placeholder.png");
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -72,10 +82,8 @@ export default function ProviderProfile() {
   const [acceptedTermsVersion, setAcceptedTermsVersion] = useState<string | null>(null);
   const [agreeTerms, setAgreeTerms] = useState(false);
 
-  // We only treat it as needing reaccept once we know the current stored version.
   const needsTermsReaccept = acceptedTermsVersion !== TERMS_VERSION;
 
-  // Background check disclaimer popup
   const [showDisclaimer, setShowDisclaimer] = useState(false);
 
   useEffect(() => {
@@ -87,7 +95,9 @@ export default function ProviderProfile() {
 
       const { data, error } = await supabase
         .from("provider_profiles")
-        .select("id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at")
+        .select(
+          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at,is_example"
+        )
         .eq("id", id)
         .single();
 
@@ -95,7 +105,7 @@ export default function ProviderProfile() {
         console.error("ProviderProfile load error:", error);
         setProvider(null);
         setNotFound(true);
-        setAvatarUrl(null);
+        setAvatarUrl("/avatar-placeholder.png");
       } else {
         const row = data as ProviderProfileRow;
         setProvider(row);
@@ -103,17 +113,18 @@ export default function ProviderProfile() {
         // Load primary photo as avatar
         const { data: media, error: mediaErr } = await supabase
           .from("provider_media")
-          .select("url")
+          .select("id,provider_id,url,is_primary,media_type")
           .eq("provider_id", row.id)
           .eq("is_primary", true)
-          .eq("media_type", "photo")
           .limit(1);
 
         if (mediaErr) {
-          console.error("ProviderProfile avatar load error:", mediaErr);
-          setAvatarUrl(null);
+          console.error("Provider avatar load error:", mediaErr);
+          setAvatarUrl("/avatar-placeholder.png");
         } else {
-          setAvatarUrl(media?.[0]?.url ?? null);
+          const m = (media?.[0] as ProviderMediaRow | undefined) ?? undefined;
+          if (m?.media_type === "photo" && m.url) setAvatarUrl(m.url);
+          else setAvatarUrl("/avatar-placeholder.png");
         }
       }
 
@@ -152,6 +163,8 @@ export default function ProviderProfile() {
 
     loadTermsAcceptance();
   }, []);
+
+  const isExample = !!provider?.is_example;
 
   const displayName = provider?.location ? `Helper in ${provider.location}` : "Helper";
   const displayLocation = [provider?.neighborhood, provider?.location].filter(Boolean).join(", ") || "Local";
@@ -193,7 +206,7 @@ export default function ProviderProfile() {
     if (!seen) {
       setShowDisclaimer(true);
       localStorage.setItem(key, "1");
-      return false; // IMPORTANT: caller should stop flow
+      return false;
     }
     return true;
   };
@@ -201,9 +214,13 @@ export default function ProviderProfile() {
   const handleBookAndPay = async () => {
     setBookingError(null);
 
-    // show disclaimer at least once AND gate flow
-    if (!ensureDisclaimerSeen()) return;
+    // ✅ HARD BLOCK: example listing
+    if (isExample) {
+      setBookingError("This is an Example listing. Booking is disabled.");
+      return;
+    }
 
+    if (!ensureDisclaimerSeen()) return;
     if (!provider) return;
 
     const { data: authData, error: authErr } = await supabase.auth.getUser();
@@ -215,7 +232,6 @@ export default function ProviderProfile() {
       return;
     }
 
-    // Load latest acceptance version (fresh read) to prevent stale UI state
     const { data: prof, error: profLoadErr } = await supabase
       .from("profiles")
       .select("accepted_terms_version")
@@ -233,7 +249,6 @@ export default function ProviderProfile() {
 
     const mismatch = currentAccepted !== TERMS_VERSION;
 
-    // Terms gating (re-accept on version mismatch)
     if (mismatch && !agreeTerms) {
       setBookingError("Please agree to the Terms & Conditions to continue.");
       return;
@@ -258,7 +273,6 @@ export default function ProviderProfile() {
       const start = pricing.start;
       const end = pricing.end;
 
-      // If user accepted (or re-accepted), write sitewide acceptance on profiles
       if (mismatch && agreeTerms) {
         const { error: profErr } = await supabase
           .from("profiles")
@@ -278,7 +292,6 @@ export default function ProviderProfile() {
         setAcceptedTermsVersion(TERMS_VERSION);
       }
 
-      // 1) If recurring, create booking_series first
       let seriesId: string | null = null;
 
       if (recurring !== "none") {
@@ -314,7 +327,6 @@ export default function ProviderProfile() {
         seriesId = series.id;
       }
 
-      // 2) Create a booking row for the FIRST occurrence
       const { data: booking, error: bookingErr } = await supabase
         .from("bookings")
         .insert({
@@ -324,15 +336,11 @@ export default function ProviderProfile() {
           start_at: start.toISOString(),
           end_at: end.toISOString(),
           status: "pending_payment",
-
           provider_rate: hourly,
           fee_rate: FEE_RATE,
-
           customer_total: pricing.total,
           platform_fee: pricing.fee,
           provider_payout: pricing.providerBase,
-
-          // transaction-level proof of acceptance
           accepted_terms_at: new Date().toISOString(),
           accepted_terms_version: TERMS_VERSION,
         })
@@ -346,7 +354,6 @@ export default function ProviderProfile() {
         return;
       }
 
-      // 3) Create Stripe Checkout session via Netlify function
       const resp = await fetch("/.netlify/functions/create-checkout-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -398,26 +405,34 @@ export default function ProviderProfile() {
           ) : notFound || !provider ? (
             <div className="bg-card rounded-2xl p-10 border border-border text-center">
               <h1 className="text-2xl font-bold text-foreground mb-2">Profile not found</h1>
-              <p className="text-muted-foreground mb-6">
-                This helper may have been removed or the link is invalid.
-              </p>
+              <p className="text-muted-foreground mb-6">This helper may have been removed or the link is invalid.</p>
               <Button onClick={() => navigate("/search")}>Go to Search</Button>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 bg-card rounded-2xl p-6 border border-border shadow-card">
+              <div className="lg:col-span-2 bg-card rounded-2xl p-6 border border-border shadow-card relative overflow-hidden">
+                {/* Example stamp on profile */}
+                {isExample && (
+                  <div className="pointer-events-none absolute inset-0 z-10">
+                    <div
+                      className="absolute top-5 right-[-55px] rotate-12 border-2 border-foreground/60 text-foreground/70 rounded-md px-4 py-1 text-xs md:text-sm font-bold tracking-wider uppercase bg-background/60 backdrop-blur-sm shadow-sm"
+                      style={{ letterSpacing: "0.18em" }}
+                    >
+                      Example listing
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-start gap-5">
                   <img
-                    src={avatarUrl ?? "/avatar-placeholder.png"}
+                    src={avatarUrl}
                     alt={displayName}
                     className="w-20 h-20 rounded-2xl object-cover border border-border"
                   />
 
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <h1 className="text-2xl md:text-3xl font-bold text-foreground">
-                        {displayName}
-                      </h1>
+                      <h1 className="text-2xl md:text-3xl font-bold text-foreground">{displayName}</h1>
                       {provider.verified && <BadgeCheck className="w-6 h-6 text-secondary" />}
                     </div>
 
@@ -437,14 +452,23 @@ export default function ProviderProfile() {
 
                     <div className="mt-4 flex flex-wrap gap-2">
                       {(provider.services ?? []).map((s) => (
-                        <span
-                          key={s}
-                          className="px-3 py-1 bg-muted rounded-full text-sm text-muted-foreground"
-                        >
+                        <span key={s} className="px-3 py-1 bg-muted rounded-full text-sm text-muted-foreground">
                           {s}
                         </span>
                       ))}
                     </div>
+
+                    {isExample && (
+                      <div className="mt-5 flex items-start gap-2 rounded-xl border border-border bg-muted/60 p-4">
+                        <Ban className="w-5 h-5 mt-0.5 text-muted-foreground" />
+                        <div>
+                          <div className="font-semibold text-foreground">Example listing</div>
+                          <div className="text-sm text-muted-foreground">
+                            This profile is shown as a demo. Booking is disabled.
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -456,14 +480,20 @@ export default function ProviderProfile() {
                 </div>
               </div>
 
-              {/* (Booking sidebar unchanged) */}
               <aside className="bg-card rounded-2xl p-6 border border-border shadow-card h-fit">
                 <h2 className="text-lg font-semibold text-foreground mb-1">Book this helper</h2>
                 <p className="text-muted-foreground mb-4">
                   Choose a time, see the total (incl. 7.5% fee), then pay securely.
                 </p>
 
-                <div className="space-y-3">
+                {isExample && (
+                  <div className="mb-4 rounded-xl border border-border bg-muted/60 p-4 text-sm text-muted-foreground">
+                    <span className="font-semibold text-foreground">Booking disabled:</span>{" "}
+                    this is an Example listing.
+                  </div>
+                )}
+
+                <div className={`space-y-3 ${isExample ? "opacity-60 pointer-events-none select-none" : ""}`}>
                   <div>
                     <label className="text-sm text-muted-foreground">Date</label>
                     <input
@@ -534,12 +564,9 @@ export default function ProviderProfile() {
                       </span>
                     </div>
 
-                    {pricing?.error && (
-                      <div className="text-sm text-destructive mt-2">{pricing.error}</div>
-                    )}
+                    {pricing?.error && <div className="text-sm text-destructive mt-2">{pricing.error}</div>}
                   </div>
 
-                  {/* Terms acceptance prompt (only if mismatch known) */}
                   {needsTermsReaccept && (
                     <label className="flex items-start gap-3 text-sm">
                       <input
@@ -567,24 +594,24 @@ export default function ProviderProfile() {
                   </div>
 
                   {bookingError && <div className="text-sm text-destructive">{bookingError}</div>}
-
-                  <Button
-                    className="w-full"
-                    onClick={handleBookAndPay}
-                    disabled={bookingLoading || !!pricing?.error || (needsTermsReaccept && !agreeTerms)}
-                  >
-                    {bookingLoading ? "Redirecting to payment…" : "Book & Pay"}
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => navigate("/search")}
-                    disabled={bookingLoading}
-                  >
-                    View More Helpers
-                  </Button>
                 </div>
+
+                <Button
+                  className="w-full mt-3"
+                  onClick={handleBookAndPay}
+                  disabled={
+                    bookingLoading ||
+                    !!pricing?.error ||
+                    isExample ||
+                    (needsTermsReaccept && !agreeTerms)
+                  }
+                >
+                  {isExample ? "Booking Disabled" : bookingLoading ? "Redirecting to payment…" : "Book & Pay"}
+                </Button>
+
+                <Button variant="outline" className="w-full mt-3" onClick={() => navigate("/search")} disabled={bookingLoading}>
+                  View More Helpers
+                </Button>
               </aside>
             </div>
           )}

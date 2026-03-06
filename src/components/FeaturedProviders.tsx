@@ -3,16 +3,37 @@ import { supabase } from "@/integrations/supabase/client";
 import ProviderCard from "./ProviderCard";
 import { useNavigate } from "react-router-dom";
 
+type ProviderRow = {
+  id: string;
+  location: string | null;
+  neighborhood: string | null;
+  hourly_rate: string | number | null;
+  services: string[] | null;
+  verified: boolean | null;
+  available: boolean | null;
+  user_id: string;
+  created_at: string;
+  is_example?: boolean | null;
+};
+
+type ProviderMediaRow = {
+  id: string;
+  provider_id: string;
+  url: string;
+  is_primary: boolean | null;
+  media_type: string | null;
+};
+
 const FeaturedProviders = () => {
   const navigate = useNavigate();
-  const [providers, setProviders] = useState<any[]>([]);
+  const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [avatarByProviderId, setAvatarByProviderId] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const loadProviders = async () => {
       const { data, error } = await supabase
         .from("provider_profiles")
-        .select("id, location, neighborhood, hourly_rate, services, verified, available, user_id, created_at")
+        .select("id, location, neighborhood, hourly_rate, services, verified, available, user_id, created_at, is_example")
         .order("created_at", { ascending: false })
         .limit(6);
 
@@ -21,31 +42,33 @@ const FeaturedProviders = () => {
         return;
       }
 
-      const rows = data ?? [];
+      const rows = (data ?? []) as ProviderRow[];
       setProviders(rows);
 
-      const ids = rows.map((r: any) => r.id).filter(Boolean);
-      if (ids.length) {
-        const { data: media, error: mediaErr } = await supabase
-          .from("provider_media")
-          .select("provider_id,url")
-          .in("provider_id", ids)
-          .eq("is_primary", true)
-          .eq("media_type", "photo");
+      const ids = rows.map((r) => r.id);
+      if (ids.length === 0) return;
 
-        if (mediaErr) {
-          console.error("Failed to load featured avatars", mediaErr);
-          setAvatarByProviderId({});
-        } else {
-          const map: Record<string, string> = {};
-          for (const m of media ?? []) {
-            if (m?.provider_id && m?.url) map[m.provider_id] = m.url;
-          }
-          setAvatarByProviderId(map);
-        }
-      } else {
-        setAvatarByProviderId({});
+      // Fetch primary photo for all shown providers (single query)
+      const { data: media, error: mediaErr } = await supabase
+        .from("provider_media")
+        .select("id,provider_id,url,is_primary,media_type")
+        .in("provider_id", ids)
+        .eq("is_primary", true);
+
+      if (mediaErr) {
+        console.error("Failed to load provider_media for avatars", mediaErr);
+        return;
       }
+
+      const map: Record<string, string> = {};
+      (media ?? []).forEach((m: ProviderMediaRow) => {
+        // Prefer primary photo, ignore videos for avatar
+        if (m.media_type === "photo" && m.url && !map[m.provider_id]) {
+          map[m.provider_id] = m.url;
+        }
+      });
+
+      setAvatarByProviderId(map);
     };
 
     loadProviders();
@@ -55,7 +78,7 @@ const FeaturedProviders = () => {
     <section id="providers" className="py-24">
       <div className="container mx-auto px-4">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {providers.map((provider: any, index: number) => (
+          {providers.map((provider, index) => (
             <div
               key={provider.id}
               className="animate-fade-in cursor-pointer"
@@ -72,6 +95,7 @@ const FeaturedProviders = () => {
                 services={provider.services ?? []}
                 verified={!!provider.verified}
                 available={!!provider.available}
+                isExample={!!provider.is_example}
               />
             </div>
           ))}

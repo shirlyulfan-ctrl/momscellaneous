@@ -25,6 +25,17 @@ type ProviderProfileRow = {
   available: boolean | null;
   years_experience: number | null;
   created_at: string;
+
+  // NEW
+  is_example?: boolean | null;
+};
+
+type ProviderMediaRow = {
+  id: string;
+  provider_id: string;
+  url: string;
+  is_primary: boolean | null;
+  media_type: string | null;
 };
 
 type ProviderAvailabilitySlot = {
@@ -92,11 +103,10 @@ const SearchPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // Incoming query params (from HeroSection and/or manual edits)
   const queryType = (searchParams.get("type") as SearchType | null) ?? "one-time";
-  const whenParam = searchParams.get("when"); // YYYY-MM-DDTHH:MM (home page)
-  const timeParam = searchParams.get("time"); // HH:MM (home page recurring)
-  const daysParam = searchParams.get("days"); // mon,tue,wed (home page recurring)
+  const whenParam = searchParams.get("when");
+  const timeParam = searchParams.get("time");
+  const daysParam = searchParams.get("days");
 
   const initialQuery = searchParams.get("q") || "";
   const initialLocation = searchParams.get("location") || "";
@@ -105,7 +115,6 @@ const SearchPage = () => {
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [location, setLocation] = useState(initialLocation);
 
-  // Window-based availability search (existing UX on /search)
   const [startDateTime, setStartDateTime] = useState("");
   const [endDateTime, setEndDateTime] = useState("");
 
@@ -118,23 +127,19 @@ const SearchPage = () => {
   const [rows, setRows] = useState<ProviderProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // NEW: primary avatar urls by provider id
-  const [avatarByProviderId, setAvatarByProviderId] = useState<Record<string, string>>({});
-
-  // Availability matches
   const [availabilityProviderIds, setAvailabilityProviderIds] = useState<Set<string> | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
-  // NEW: Distance/radius matches (from RPC)
   const [radiusProviderIds, setRadiusProviderIds] = useState<Set<string> | null>(null);
   const [radiusLoading, setRadiusLoading] = useState(false);
   const [radiusError, setRadiusError] = useState<string | null>(null);
 
-  // Avoid race conditions on geocode while user types
+  // NEW: avatars map
+  const [avatarByProviderId, setAvatarByProviderId] = useState<Record<string, string>>({});
+
   const geocodeReqId = useRef(0);
 
-  // If one-time "when" exists, auto-fill start/end (end defaults +2h just for the UI)
   useEffect(() => {
     if (!whenParam) return;
     const start = new Date(whenParam);
@@ -155,7 +160,7 @@ const SearchPage = () => {
     return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs < startMs;
   }, [hasWindow, startDateTime, endDateTime]);
 
-  // Load providers + their primary avatar media
+  // Load providers
   useEffect(() => {
     const loadProviders = async () => {
       setLoading(true);
@@ -163,7 +168,7 @@ const SearchPage = () => {
       const { data, error } = await supabase
         .from("provider_profiles")
         .select(
-          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at"
+          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at,is_example"
         )
         .order("created_at", { ascending: false });
 
@@ -171,35 +176,34 @@ const SearchPage = () => {
         console.error("Failed to load provider_profiles:", error);
         setRows([]);
         setAvatarByProviderId({});
-        setLoading(false);
-        return;
-      }
-
-      const providers = (data ?? []) as ProviderProfileRow[];
-      setRows(providers);
-
-      // Fetch primary photos for these providers
-      const ids = providers.map((p) => p.id);
-      if (ids.length) {
-        const { data: media, error: mediaErr } = await supabase
-          .from("provider_media")
-          .select("provider_id,url")
-          .in("provider_id", ids)
-          .eq("is_primary", true)
-          .eq("media_type", "photo");
-
-        if (mediaErr) {
-          console.error("Failed to load provider_media primary avatars:", mediaErr);
-          setAvatarByProviderId({});
-        } else {
-          const map: Record<string, string> = {};
-          for (const m of media ?? []) {
-            if (m?.provider_id && m?.url) map[m.provider_id] = m.url;
-          }
-          setAvatarByProviderId(map);
-        }
       } else {
-        setAvatarByProviderId({});
+        const providerRows = (data ?? []) as ProviderProfileRow[];
+        setRows(providerRows);
+
+        // Fetch primary photos for avatars in ONE query
+        const ids = providerRows.map((p) => p.id);
+        if (ids.length) {
+          const { data: media, error: mediaErr } = await supabase
+            .from("provider_media")
+            .select("id,provider_id,url,is_primary,media_type")
+            .in("provider_id", ids)
+            .eq("is_primary", true);
+
+          if (mediaErr) {
+            console.error("Failed to load provider_media for avatars:", mediaErr);
+            setAvatarByProviderId({});
+          } else {
+            const map: Record<string, string> = {};
+            (media ?? []).forEach((m: ProviderMediaRow) => {
+              if (m.media_type === "photo" && m.url && !map[m.provider_id]) {
+                map[m.provider_id] = m.url;
+              }
+            });
+            setAvatarByProviderId(map);
+          }
+        } else {
+          setAvatarByProviderId({});
+        }
       }
 
       setLoading(false);
@@ -215,7 +219,7 @@ const SearchPage = () => {
 
       const q = location.trim();
       if (!q) {
-        setRadiusProviderIds(null); // no radius filtering if no location entered
+        setRadiusProviderIds(null);
         return;
       }
 
@@ -275,7 +279,7 @@ const SearchPage = () => {
     return () => clearTimeout(t);
   }, [location]);
 
-  // Availability filtering (unchanged)
+  // Availability filtering
   useEffect(() => {
     const fetchAvailabilityMatches = async () => {
       setAvailabilityError(null);
@@ -341,9 +345,8 @@ const SearchPage = () => {
           const enMin = endLocal.getHours() * 60 + endLocal.getMinutes();
 
           let contains = stMin <= requestedMinutes && requestedMinutes < enMin;
-          if (enMin < stMin) {
-            contains = requestedMinutes >= stMin || requestedMinutes < enMin;
-          }
+          if (enMin < stMin) contains = requestedMinutes >= stMin || requestedMinutes < enMin;
+
           if (!contains) continue;
 
           const set = providerToWeekdayOK.get(s.provider_id) ?? new Set<number>();
@@ -486,7 +489,7 @@ const SearchPage = () => {
         services: p.services ?? [],
         verified: !!p.verified,
         available: !!p.available,
-        bio: p.bio ?? "",
+        isExample: !!p.is_example,
       };
     });
   }, [filteredProviders, avatarByProviderId]);

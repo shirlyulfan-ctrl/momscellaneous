@@ -2,6 +2,7 @@ import { Star, MapPin, CheckCircle, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface ProviderCardProps {
+  id?: string;
   name: string;
   avatar?: string;
   rating?: number;
@@ -11,6 +12,10 @@ interface ProviderCardProps {
   services: string[];
   verified: boolean;
   available: boolean;
+
+  // NEW
+  isExample?: boolean;
+
   onViewProfile?: () => void;
 }
 
@@ -24,10 +29,28 @@ const ProviderCard = ({
   services,
   verified,
   available,
+  isExample,
 }: ProviderCardProps) => {
   return (
-    <div className="bg-card rounded-2xl p-6 shadow-card hover:shadow-card-hover transition-all duration-300 border border-border hover:border-primary/30 group">
+    <div className="relative bg-card rounded-2xl p-6 shadow-card hover:shadow-card-hover transition-all duration-300 border border-border hover:border-primary/30 group overflow-hidden">
+      {/* Example stamp */}
+      {isExample && (
+        <div className="pointer-events-none absolute inset-0 z-10">
+          <div
+            className="absolute top-5 right-[-55px] rotate-12 border-2 border-foreground/60 text-foreground/70 rounded-md px-4 py-1 text-xs md:text-sm font-bold tracking-wider uppercase bg-background/60 backdrop-blur-sm shadow-sm"
+            style={{
+              letterSpacing: "0.18em",
+              textShadow: "0 1px 0 rgba(0,0,0,0.08)",
+            }}
+          >
+            Example listing
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
       <div className="flex items-start gap-4 mb-4">
+        {/* Avatar */}
         <div className="relative">
           <img
             src={avatar ?? "/avatar-placeholder.png"}
@@ -42,6 +65,7 @@ const ProviderCard = ({
           )}
         </div>
 
+        {/* Info */}
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <h3 className="font-bold text-foreground text-lg">{name}</h3>
@@ -53,18 +77,19 @@ const ProviderCard = ({
           </div>
         </div>
 
+        {/* Rate */}
         <div className="text-right">
           <span className="text-2xl font-bold text-foreground">${hourlyRate}</span>
           <span className="text-muted-foreground text-sm">/hr</span>
         </div>
       </div>
 
+      {/* Rating */}
       <div className="flex items-center gap-2 mb-4">
         <div className="flex items-center gap-1">
           <Star className="w-5 h-5 text-accent fill-accent" />
           <span className="font-semibold text-foreground">{rating ?? 5}</span>
         </div>
-
         <span className="text-muted-foreground text-sm">({reviews ?? 0} reviews)</span>
 
         {available && (
@@ -75,6 +100,7 @@ const ProviderCard = ({
         )}
       </div>
 
+      {/* Services */}
       <div className="flex flex-wrap gap-2 mb-5">
         {services.map((service) => (
           <span
@@ -86,11 +112,15 @@ const ProviderCard = ({
         ))}
       </div>
 
+      {/* Actions */}
       <div className="flex gap-3">
         <Button variant="outline" className="flex-1">
           View Profile
         </Button>
-        <Button className="flex-1">Book Now</Button>
+
+        <Button className="flex-1" disabled={!!isExample} title={isExample ? "Example listing — booking disabled" : undefined}>
+          {isExample ? "Example" : "Book Now"}
+        </Button>
       </div>
     </div>
   );
