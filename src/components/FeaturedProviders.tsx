@@ -14,6 +14,7 @@ type ProviderRow = {
   user_id: string;
   created_at: string;
   is_example?: boolean | null;
+  is_published?: boolean | null;
 };
 
 type ProviderMediaRow = {
@@ -33,12 +34,17 @@ const FeaturedProviders = () => {
     const loadProviders = async () => {
       const { data, error } = await supabase
         .from("provider_profiles")
-        .select("id, location, neighborhood, hourly_rate, services, verified, available, user_id, created_at, is_example")
+        .select(
+          "id, location, neighborhood, hourly_rate, services, verified, available, user_id, created_at, is_example, is_published"
+        )
+        .or("is_published.eq.true,is_example.eq.true")
         .order("created_at", { ascending: false })
         .limit(6);
 
       if (error) {
         console.error("Failed to load providers", error);
+        setProviders([]);
+        setAvatarByProviderId({});
         return;
       }
 
@@ -46,9 +52,11 @@ const FeaturedProviders = () => {
       setProviders(rows);
 
       const ids = rows.map((r) => r.id);
-      if (ids.length === 0) return;
+      if (ids.length === 0) {
+        setAvatarByProviderId({});
+        return;
+      }
 
-      // Fetch primary photo for all shown providers (single query)
       const { data: media, error: mediaErr } = await supabase
         .from("provider_media")
         .select("id,provider_id,url,is_primary,media_type")
@@ -57,12 +65,12 @@ const FeaturedProviders = () => {
 
       if (mediaErr) {
         console.error("Failed to load provider_media for avatars", mediaErr);
+        setAvatarByProviderId({});
         return;
       }
 
       const map: Record<string, string> = {};
       (media ?? []).forEach((m: ProviderMediaRow) => {
-        // Prefer primary photo, ignore videos for avatar
         if (m.media_type === "photo" && m.url && !map[m.provider_id]) {
           map[m.provider_id] = m.url;
         }
@@ -86,6 +94,7 @@ const FeaturedProviders = () => {
               onClick={() => navigate(`/providers/${provider.id}`)}
             >
               <ProviderCard
+                id={provider.id}
                 name={`Helper in ${provider.location ?? "your area"}`}
                 avatar={avatarByProviderId[provider.id] ?? "/avatar-placeholder.png"}
                 rating={5}
