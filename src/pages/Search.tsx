@@ -25,9 +25,8 @@ type ProviderProfileRow = {
   available: boolean | null;
   years_experience: number | null;
   created_at: string;
-
-  // NEW
   is_example?: boolean | null;
+  is_published?: boolean | null;
 };
 
 type ProviderMediaRow = {
@@ -135,7 +134,6 @@ const SearchPage = () => {
   const [radiusLoading, setRadiusLoading] = useState(false);
   const [radiusError, setRadiusError] = useState<string | null>(null);
 
-  // NEW: avatars map
   const [avatarByProviderId, setAvatarByProviderId] = useState<Record<string, string>>({});
 
   const geocodeReqId = useRef(0);
@@ -148,7 +146,6 @@ const SearchPage = () => {
     const end = addMinutes(start, 120);
     setStartDateTime(toDatetimeLocalValue(start));
     setEndDateTime(toDatetimeLocalValue(end));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [whenParam]);
 
   const hasWindow = !!startDateTime && !!endDateTime;
@@ -168,8 +165,9 @@ const SearchPage = () => {
       const { data, error } = await supabase
         .from("provider_profiles")
         .select(
-          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at,is_example"
+          "id,user_id,bio,location,neighborhood,hourly_rate,services,verified,available,years_experience,created_at,is_example,is_published"
         )
+        .or("is_published.eq.true,is_example.eq.true")
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -180,7 +178,6 @@ const SearchPage = () => {
         const providerRows = (data ?? []) as ProviderProfileRow[];
         setRows(providerRows);
 
-        // Fetch primary photos for avatars in ONE query
         const ids = providerRows.map((p) => p.id);
         if (ids.length) {
           const { data: media, error: mediaErr } = await supabase
@@ -439,7 +436,10 @@ const SearchPage = () => {
 
       result = result.filter((p) => {
         const services = (p.services ?? []).map((s) => s.toLowerCase());
-        return services.some((s) => s.includes(target1)) || (target2 ? services.some((s) => s.includes(target2)) : false);
+        return (
+          services.some((s) => s.includes(target1)) ||
+          (target2 ? services.some((s) => s.includes(target2)) : false)
+        );
       });
     }
 
@@ -504,7 +504,9 @@ const SearchPage = () => {
         <div className="container mx-auto px-4">
           <div className="text-center mb-10">
             <h1 className="text-4xl font-bold text-foreground mb-4">Find Local Helpers</h1>
-            <p className="text-xl text-muted-foreground">Search for trusted providers in your neighborhood</p>
+            <p className="text-xl text-muted-foreground">
+              Search for trusted providers in your neighborhood
+            </p>
           </div>
 
           <div className="bg-card rounded-2xl p-6 shadow-card mb-8">
