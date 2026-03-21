@@ -1,4 +1,3 @@
-// src/pages/Search.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -42,6 +41,12 @@ type ProviderAvailabilitySlot = {
   start_at: string;
   end_at: string;
   timezone?: string | null;
+};
+
+type ProviderReviewSummaryRow = {
+  provider_id: string;
+  avg_rating: number | string | null;
+  review_count: number | string | null;
 };
 
 type SearchType = "one-time" | "recurring";
@@ -135,6 +140,9 @@ const SearchPage = () => {
   const [radiusError, setRadiusError] = useState<string | null>(null);
 
   const [avatarByProviderId, setAvatarByProviderId] = useState<Record<string, string>>({});
+  const [reviewSummaryByProviderId, setReviewSummaryByProviderId] = useState<
+    Record<string, { avg_rating: number; review_count: number }>
+  >({});
 
   const geocodeReqId = useRef(0);
 
@@ -157,7 +165,6 @@ const SearchPage = () => {
     return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs < startMs;
   }, [hasWindow, startDateTime, endDateTime]);
 
-  // Load providers
   useEffect(() => {
     const loadProviders = async () => {
       setLoading(true);
@@ -174,33 +181,61 @@ const SearchPage = () => {
         console.error("Failed to load provider_profiles:", error);
         setRows([]);
         setAvatarByProviderId({});
-      } else {
-        const providerRows = (data ?? []) as ProviderProfileRow[];
-        setRows(providerRows);
+        setReviewSummaryByProviderId({});
+        setLoading(false);
+        return;
+      }
 
-        const ids = providerRows.map((p) => p.id);
-        if (ids.length) {
-          const { data: media, error: mediaErr } = await supabase
+      const providerRows = (data ?? []) as ProviderProfileRow[];
+      setRows(providerRows);
+
+      const ids = providerRows.map((p) => p.id);
+
+      if (!ids.length) {
+        setAvatarByProviderId({});
+        setReviewSummaryByProviderId({});
+        setLoading(false);
+        return;
+      }
+
+      const [{ data: reviewsData, error: reviewsErr }, { data: media, error: mediaErr }] =
+        await Promise.all([
+          supabase
+            .from("provider_review_summary")
+            .select("provider_id, avg_rating, review_count")
+            .in("provider_id", ids),
+          supabase
             .from("provider_media")
             .select("id,provider_id,url,is_primary,media_type")
             .in("provider_id", ids)
-            .eq("is_primary", true);
+            .eq("is_primary", true),
+        ]);
 
-          if (mediaErr) {
-            console.error("Failed to load provider_media for avatars:", mediaErr);
-            setAvatarByProviderId({});
-          } else {
-            const map: Record<string, string> = {};
-            (media ?? []).forEach((m: ProviderMediaRow) => {
-              if (m.media_type === "photo" && m.url && !map[m.provider_id]) {
-                map[m.provider_id] = m.url;
-              }
-            });
-            setAvatarByProviderId(map);
+      if (reviewsErr) {
+        console.error("Failed to load review summary:", reviewsErr);
+        setReviewSummaryByProviderId({});
+      } else {
+        const reviewMap: Record<string, { avg_rating: number; review_count: number }> = {};
+        (reviewsData ?? []).forEach((r: ProviderReviewSummaryRow) => {
+          reviewMap[r.provider_id] = {
+            avg_rating: Number(r.avg_rating ?? 0),
+            review_count: Number(r.review_count ?? 0),
+          };
+        });
+        setReviewSummaryByProviderId(reviewMap);
+      }
+
+      if (mediaErr) {
+        console.error("Failed to load provider_media for avatars:", mediaErr);
+        setAvatarByProviderId({});
+      } else {
+        const mediaMap: Record<string, string> = {};
+        (media ?? []).forEach((m: ProviderMediaRow) => {
+          if (m.media_type === "photo" && m.url && !mediaMap[m.provider_id]) {
+            mediaMap[m.provider_id] = m.url;
           }
-        } else {
-          setAvatarByProviderId({});
-        }
+        });
+        setAvatarByProviderId(mediaMap);
       }
 
       setLoading(false);
@@ -209,7 +244,6 @@ const SearchPage = () => {
     loadProviders();
   }, []);
 
-  // location -> geocode -> RPC providers_who_can_reach
   useEffect(() => {
     const run = async () => {
       setRadiusError(null);
@@ -276,7 +310,6 @@ const SearchPage = () => {
     return () => clearTimeout(t);
   }, [location]);
 
-  // Availability filtering
   useEffect(() => {
     const fetchAvailabilityMatches = async () => {
       setAvailabilityError(null);
@@ -401,17 +434,14 @@ const SearchPage = () => {
 
   const filteredProviders = useMemo(() => {
     let result = [...rows];
-
     const recurringActive = queryType === "recurring" && !!timeParam && !!daysParam;
 
     if (location.trim() && radiusProviderIds !== null) {
-      const allowed = radiusProviderIds ?? new Set<string>();
-      result = result.filter((p) => allowed.has(p.id));
+      result = result.filter((p) => radiusProviderIds.has(p.id));
     }
 
     if ((hasWindow || recurringActive) && availabilityProviderIds !== null) {
-      const allowed = availabilityProviderIds ?? new Set<string>();
-      result = result.filter((p) => allowed.has(p.id));
+      result = result.filter((p) => availabilityProviderIds.has(p.id));
     }
 
     if (searchQuery.trim()) {
@@ -436,10 +466,7 @@ const SearchPage = () => {
 
       result = result.filter((p) => {
         const services = (p.services ?? []).map((s) => s.toLowerCase());
-        return (
-          services.some((s) => s.includes(target1)) ||
-          (target2 ? services.some((s) => s.includes(target2)) : false)
-        );
+        return services.some((s) => s.includes(target1)) || (target2 ? services.some((s) => s.includes(target2)) : false);
       });
     }
 
@@ -453,6 +480,13 @@ const SearchPage = () => {
         break;
       case "price-high":
         result.sort((a, b) => Number(b.hourly_rate ?? 0) - Number(a.hourly_rate ?? 0));
+        break;
+      case "rating":
+        result.sort((a, b) => {
+          const aRating = reviewSummaryByProviderId[a.id]?.avg_rating ?? 0;
+          const bRating = reviewSummaryByProviderId[b.id]?.avg_rating ?? 0;
+          return bRating - aRating;
+        });
         break;
       default:
         break;
@@ -473,17 +507,20 @@ const SearchPage = () => {
     selectedNeighborhood,
     showAvailableOnly,
     sortBy,
+    reviewSummaryByProviderId,
   ]);
 
   const cardModels = useMemo(() => {
     return filteredProviders.map((p) => {
       const loc = [p.neighborhood, p.location].filter(Boolean).join(", ") || "Local";
+      const review = reviewSummaryByProviderId[p.id];
+
       return {
         id: p.id,
         name: `Helper in ${p.location ?? "your area"}`,
         avatar: avatarByProviderId[p.id] ?? "/avatar-placeholder.png",
-        rating: 5,
-        reviews: 0,
+        rating: review?.avg_rating ?? 0,
+        reviews: review?.review_count ?? 0,
         location: loc,
         hourlyRate: Number(p.hourly_rate ?? 0),
         services: p.services ?? [],
@@ -492,7 +529,7 @@ const SearchPage = () => {
         isExample: !!p.is_example,
       };
     });
-  }, [filteredProviders, avatarByProviderId]);
+  }, [filteredProviders, avatarByProviderId, reviewSummaryByProviderId]);
 
   const showCountLoading = loading || availabilityLoading || radiusLoading;
 
@@ -623,7 +660,10 @@ const SearchPage = () => {
                       onClick={() => navigate(`/providers/${provider.id}`)}
                       className="cursor-pointer"
                     >
-                      <ProviderCard {...provider} />
+                      <ProviderCard
+                        {...provider}
+                        onViewProfile={() => navigate(`/providers/${provider.id}`)}
+                      />
                     </div>
                   ))}
                 </div>
